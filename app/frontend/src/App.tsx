@@ -3,7 +3,7 @@ import MatchTrackerPage from './pages/MatchTrackerPage';
 
 function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/owtracker">
       <Routes>
         <Route path="/" element={<MatchTrackerPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
