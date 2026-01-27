@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  owtracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: owtracker
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - NODE_ENV=production
+    volumes:
+      - ./app/backend/matches.sqlite:/app/backend/matches.sqlite
+    restart: unless-stopped
+    networks:
+      - web
+
+networks:
+  web:
+    external: true

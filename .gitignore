@@ -1,0 +1,15 @@
+# Dependencies
+/app/frontend/node_modules
+/app/backend/node_modules
+
+# Build output
+/app/frontend/dist
+
+# Logs
+.logs/
+
+# PIDs
+.pids/
+
+# Local Database
+/app/backend/matches.sqlite
