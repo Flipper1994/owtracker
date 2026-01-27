@@ -52,7 +52,7 @@ Dieses Netzwerk wird für alle deine Services genutzt. Falls bereits vorhanden, 
 docker-compose up -d
 ```
 
-Der Container startet automatisch und serviert die App auf `localhost:8080`.
+Der Container startet automatisch und serviert die App auf `localhost:12321`.
 
 ### 4. Nginx Konfiguration anpassen
 
