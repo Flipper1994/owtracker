@@ -31,6 +31,21 @@ type MatchEntry = {
   createdAt: string;
 };
 
+const generateId = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
+    return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
+  }
+  return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
 const PLAYER_NAMES = ['Pudel', 'Nora', 'Philipp'];
 
 const COMPETITIVE_TIERS = [
@@ -139,12 +154,12 @@ const createPlayer = (id: string, usedNames: string[] = []): PlayerEntry => ({
 });
 
 const createMatch = (): MatchEntry => ({
-  id: crypto.randomUUID(),
+  id: generateId(),
   queue: 'Rangliste',
   result: 'Win',
   rank: '',
   map: '',
-  players: [createPlayer(crypto.randomUUID())],
+  players: [createPlayer(generateId())],
   createdAt: new Date().toISOString(),
 });
 
@@ -164,7 +179,7 @@ export default function MatchTrackerPage() {
   );
 
   const addToast = useCallback((message: string) => {
-    const id = crypto.randomUUID();
+    const id = generateId();
     setToasts((prev) => [...prev, { id, message }]);
     window.setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
@@ -373,7 +388,7 @@ export default function MatchTrackerPage() {
           : [
               ...prev.players,
               createPlayer(
-                crypto.randomUUID(),
+                generateId(),
                 prev.players.map((player) => player.name),
               ),
             ],
@@ -392,7 +407,7 @@ export default function MatchTrackerPage() {
     if (submitLocked) return;
     const matchToSave: MatchEntry = {
       ...draft,
-      id: crypto.randomUUID(),
+      id: generateId(),
       createdAt: new Date().toISOString(),
     };
     try {
