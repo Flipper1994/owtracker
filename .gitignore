@@ -1,6 +1,8 @@
 # Dependencies
 /app/frontend/node_modules
 /app/backend/node_modules
+/app/proxy/node_modules
+**/node_modules
 
 # Build output
 /app/frontend/dist

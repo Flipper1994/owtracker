@@ -1,14 +1,7 @@
 import axios from 'axios';
 
-// Get base URL relative to current app location
-const getBaseURL = (): string => {
-  // In production, API calls should go to /owtracker/api
-  // In development with vite proxy, it will be rewritten automatically
-  return '/owtracker/api';
-};
-
 const api = axios.create({
-  baseURL: getBaseURL(),
+  baseURL: '/owtracker/api',
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',

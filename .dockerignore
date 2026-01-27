@@ -1,0 +1,11 @@
+.git
+.logs
+.pids
+app/frontend/node_modules
+app/backend/node_modules
+app/proxy/node_modules
+**/node_modules
+*.log
+*.sqlite
+dist
+app/frontend/dist

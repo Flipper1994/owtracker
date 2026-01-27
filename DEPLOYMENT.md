@@ -45,6 +45,10 @@ Dieses Netzwerk wird für alle deine Services genutzt. Falls bereits vorhanden, 
 ### 3. Docker Compose starten
 
 ```bash
+# Alternativ: alles mit einem Script starten
+./run-vserver.sh
+
+# oder manuell
 docker-compose up -d
 ```
 

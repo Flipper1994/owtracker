@@ -1,11 +1,19 @@
 # Build stage
-FROM node:18-alpine AS builder
+FROM node:20-bullseye-slim AS builder
 
 WORKDIR /app
 
 # Copy package files
 COPY app/frontend/package*.json ./frontend/
 COPY app/backend/package*.json ./backend/
+
+# Install build dependencies for native modules (better-sqlite3)
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    python3 \
+    make \
+    g++ \
+  && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies
 RUN cd frontend && npm ci && cd ..
@@ -19,7 +27,7 @@ COPY app/backend ./backend/
 RUN cd frontend && npm run build && cd ..
 
 # Production stage
-FROM node:18-alpine
+FROM node:20-bullseye-slim
 
 WORKDIR /app/backend
 

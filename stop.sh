@@ -6,18 +6,28 @@ PID_DIR="$ROOT_DIR/.pids"
 
 stop_pid() {
   local pid_file="$1"
+  local service_name="$2"
   if [[ -f "$pid_file" ]]; then
     local pid
     pid=$(cat "$pid_file")
     if kill -0 "$pid" 2>/dev/null; then
-      echo "Stopping process $pid"
+      echo "   ✓ Stopping $service_name (PID: $pid)"
       kill "$pid" 2>/dev/null || true
+      sleep 0.5
     fi
     rm -f "$pid_file"
   fi
 }
 
-stop_pid "$PID_DIR/backend.pid"
-stop_pid "$PID_DIR/frontend.pid"
+echo "================================"
+echo "OW Tracker - Stopping Services"
+echo "================================"
+echo ""
 
-echo "Stopped backend/frontend (if running)."
+stop_pid "$PID_DIR/proxy.pid" "Proxy (80)"
+stop_pid "$PID_DIR/frontend.pid" "Frontend (5173)"
+stop_pid "$PID_DIR/backend.pid" "Backend (8080)"
+
+echo ""
+echo "✅ All services stopped!"
+echo ""

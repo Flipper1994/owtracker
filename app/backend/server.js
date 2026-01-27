@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -19,20 +20,6 @@ db.exec(`
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
-
-// Serve frontend build under /owtracker
-const frontendPath = path.join(__dirname, '../frontend/dist');
-app.use('/owtracker', express.static(frontendPath));
-
-// SPA fallback for /owtracker routes
-app.get('/owtracker/*', (req, res) => {
-  const indexPath = path.join(frontendPath, 'index.html');
-  res.sendFile(indexPath, (err) => {
-    if (err) {
-      res.status(404).json({ error: 'Not found' });
-    }
-  });
-});
 
 const normalizeMatch = (match) => ({
   ...match,
@@ -125,6 +112,26 @@ app.delete('/api/matches/:id', (req, res) => {
   res.status(204).send();
 });
 
-app.listen(PORT, () => {
-  console.log(`OW Tracker backend running on http://localhost:${PORT}`);
+const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
+const frontendIndex = path.join(frontendDist, 'index.html');
+const hasFrontendBuild = fs.existsSync(frontendIndex);
+
+if (hasFrontendBuild) {
+  app.use('/owtracker', express.static(frontendDist));
+
+  app.get(/^\/owtracker(\/.*)?$/, (_req, res) => {
+    res.sendFile(frontendIndex);
+  });
+
+  app.get('/', (_req, res) => {
+    res.redirect('/owtracker');
+  });
+} else {
+  console.warn('⚠️  Frontend build not found. Skipping static /owtracker serving.');
+}
+
+const HOST = process.env.HOST || '0.0.0.0';
+app.listen(PORT, HOST, () => {
+  console.log(`OW Tracker backend running on http://0.0.0.0:${PORT}`);
+  console.log(`Access from: http://localhost:${PORT} or http://<your-ip>:${PORT}`);
 });

@@ -537,7 +537,6 @@ export default function MatchTrackerPage() {
         );
         const role = playerEntry?.role ?? '-';
         const character = playerEntry?.character;
-        const roleDisplay = formatRoleLabel(role);
         const roleLabel = role === '-' ? '-' : ROLE_LABELS[role];
         return {
           ...match,

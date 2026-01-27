@@ -5,11 +5,21 @@ export default defineConfig({
   plugins: [react()],
   base: '/owtracker/',
   server: {
+    host: '0.0.0.0',
+    port: 5173,
     proxy: {
+      // Proxy /api to /owtracker/api internally for Vite dev
+      '^/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        rewrite: (path) => path,
+      },
+      // Also support explicit /owtracker/api routing
       '/owtracker/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/owtracker\/api/, '/api'),
+        ws: true,
       },
     },
   },
