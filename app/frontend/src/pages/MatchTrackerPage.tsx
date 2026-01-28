@@ -31,6 +31,20 @@ type MatchEntry = {
   createdAt: string;
 };
 
+type ImprovementTicket = {
+  id: string;
+  title: string;
+  description?: string;
+  createdAt: string;
+  completed: boolean;
+  completedAt?: string | null;
+};
+
+type ImprovementDraft = {
+  title: string;
+  description: string;
+};
+
 const generateId = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -172,6 +186,13 @@ export default function MatchTrackerPage() {
   const [importing, setImporting] = useState(false);
   const [ultimateUnlocked, setUltimateUnlocked] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<MatchEntry | null>(null);
+  const [improvements, setImprovements] = useState<ImprovementTicket[]>([]);
+  const [improvementsLoading, setImprovementsLoading] = useState(false);
+  const [improvementsSubmitting, setImprovementsSubmitting] = useState(false);
+  const [improvementDraft, setImprovementDraft] = useState<ImprovementDraft>({
+    title: '',
+    description: '',
+  });
   const [playerSort, setPlayerSort] = useState<Record<string, SortState>>(() =>
     Object.fromEntries(
       PLAYER_NAMES.map((name) => [name, { key: 'date', direction: 'desc' }]),
@@ -226,6 +247,26 @@ export default function MatchTrackerPage() {
   useEffect(() => {
     void loadMatches();
   }, [loadMatches]);
+
+  const loadImprovements = useCallback(async () => {
+    setImprovementsLoading(true);
+    try {
+      const response = await fetch('/api/improvements');
+      if (!response.ok) {
+        throw new Error('Failed to load improvements');
+      }
+      const data = (await response.json()) as ImprovementTicket[];
+      setImprovements(Array.isArray(data) ? data : []);
+    } catch {
+      setImprovements([]);
+    } finally {
+      setImprovementsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadImprovements();
+  }, [loadImprovements]);
 
   useEffect(() => {
     if (ultimateUnlocked) return;
@@ -448,12 +489,17 @@ export default function MatchTrackerPage() {
 
   const handleExport = async () => {
     try {
-      let exportPayload: { exportedAt: string; matches: MatchEntry[] };
+      let exportPayload: {
+        exportedAt: string;
+        matches: MatchEntry[];
+        improvements?: ImprovementTicket[];
+      };
       const response = await fetch('/api/matches/export');
       if (response.ok) {
         exportPayload = (await response.json()) as {
           exportedAt: string;
           matches: MatchEntry[];
+          improvements?: ImprovementTicket[];
         };
       } else {
         const fallbackResponse = await fetch('/api/matches');
@@ -511,6 +557,7 @@ export default function MatchTrackerPage() {
         );
       }
       await loadMatches();
+      await loadImprovements();
       addToast('Import abgeschlossen');
     } catch {
       addToast('Import fehlgeschlagen');
@@ -530,6 +577,21 @@ export default function MatchTrackerPage() {
       }
       await loadMatches();
       addToast('Alle Matches gelöscht');
+    } catch {
+      addToast('Löschen fehlgeschlagen');
+    }
+  };
+
+  const handleDeleteAllImprovements = async () => {
+    const confirmed = window.confirm('Willst du wirklich alle Vorschläge löschen?');
+    if (!confirmed) return;
+    try {
+      const response = await fetch('/api/improvements', { method: 'DELETE' });
+      if (!response.ok) {
+        throw new Error('Delete failed');
+      }
+      await loadImprovements();
+      addToast('Alle Vorschläge gelöscht');
     } catch {
       addToast('Löschen fehlgeschlagen');
     }
@@ -615,6 +677,72 @@ export default function MatchTrackerPage() {
 
       return valueA.localeCompare(valueB) * direction;
     });
+  };
+
+  const sortedImprovements = useMemo(() => {
+    return [...improvements].sort((a, b) => {
+      if (a.completed !== b.completed) {
+        return a.completed ? 1 : -1;
+      }
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [improvements]);
+
+  const submitImprovement = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const title = improvementDraft.title.trim();
+    const description = improvementDraft.description.trim();
+    if (!title) {
+      addToast('Bitte einen Titel angeben');
+      return;
+    }
+    if (improvementsSubmitting) return;
+    setImprovementsSubmitting(true);
+    const ticket: ImprovementTicket = {
+      id: generateId(),
+      title,
+      description,
+      createdAt: new Date().toISOString(),
+      completed: false,
+      completedAt: null,
+    };
+    try {
+      const response = await fetch('/api/improvements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ticket),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to save improvement');
+      }
+      const saved = (await response.json()) as ImprovementTicket;
+      setImprovements((prev) => [saved, ...prev]);
+      setImprovementDraft({ title: '', description: '' });
+      addToast('Vorschlag gespeichert');
+    } catch {
+      addToast('Vorschlag konnte nicht gespeichert werden');
+    } finally {
+      setImprovementsSubmitting(false);
+    }
+  };
+
+  const toggleImprovement = async (ticket: ImprovementTicket) => {
+    try {
+      const response = await fetch(`/api/improvements/${ticket.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completed: !ticket.completed }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to update improvement');
+      }
+      const updated = (await response.json()) as ImprovementTicket;
+      setImprovements((prev) =>
+        prev.map((entry) => (entry.id === updated.id ? updated : entry)),
+      );
+    } catch {
+      addToast('Status konnte nicht aktualisiert werden');
+    }
   };
 
   const getSortIndicator = (sort: SortState, key: SortKey) =>
@@ -1267,6 +1395,100 @@ export default function MatchTrackerPage() {
               >
                 Alles löschen
               </button>
+              <button
+                type="button"
+                className="danger-button"
+                onClick={handleDeleteAllImprovements}
+              >
+                Alle Vorschläge löschen
+              </button>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section className="ow-card improvements">
+        <details>
+          <summary>Verbesserungsvorschläge</summary>
+          <div className="improvements-body">
+            <p className="muted">
+              Teile Änderungswünsche mit dem Team. Abgehakte Tickets werden grün markiert
+              und wandern ans Ende der Liste.
+            </p>
+            <form className="improvement-form" onSubmit={submitImprovement}>
+              <label>
+                Titel
+                <input
+                  type="text"
+                  placeholder="z.B. Neues Dashboard-Widget"
+                  value={improvementDraft.title}
+                  onChange={(event) =>
+                    setImprovementDraft((prev) => ({
+                      ...prev,
+                      title: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Beschreibung (optional)
+                <textarea
+                  rows={3}
+                  placeholder="Was soll sich verbessern?"
+                  value={improvementDraft.description}
+                  onChange={(event) =>
+                    setImprovementDraft((prev) => ({
+                      ...prev,
+                      description: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <div className="form-actions">
+                <button
+                  type="submit"
+                  className="primary"
+                  disabled={improvementsSubmitting}
+                >
+                  {improvementsSubmitting ? 'Speichern...' : 'Vorschlag senden'}
+                </button>
+              </div>
+            </form>
+            <div className="improvement-list-wrapper">
+              <h3>Aktuelle Tickets</h3>
+              {improvementsLoading ? (
+                <p className="muted">Lade Vorschläge...</p>
+              ) : sortedImprovements.length === 0 ? (
+                <p className="empty">Noch keine Vorschläge vorhanden.</p>
+              ) : (
+                <ul className="improvement-list">
+                  {sortedImprovements.map((ticket) => (
+                    <li
+                      key={ticket.id}
+                      className={`improvement-item ${ticket.completed ? 'completed' : ''}`}
+                    >
+                      <div>
+                        <div className="improvement-title">{ticket.title}</div>
+                        {ticket.description && (
+                          <p className="improvement-description">{ticket.description}</p>
+                        )}
+                        <span className="muted">
+                          {new Date(ticket.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="improvement-actions">
+                        <button
+                          type="button"
+                          className={ticket.completed ? 'completed' : ''}
+                          onClick={() => toggleImprovement(ticket)}
+                        >
+                          {ticket.completed ? 'Erledigt' : 'Offen'}
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </details>

@@ -18,12 +18,31 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS improvements (
+    id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    createdAt TEXT NOT NULL,
+    completed INTEGER NOT NULL DEFAULT 0,
+    completedAt TEXT
+  );
+`);
+
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
 const normalizeMatch = (match) => ({
   ...match,
   createdAt: match.createdAt ?? new Date().toISOString(),
+});
+
+const normalizeImprovement = (ticket) => ({
+  ...ticket,
+  createdAt: ticket.createdAt ?? new Date().toISOString(),
+  completed: Boolean(ticket.completed),
+  completedAt: ticket.completed
+    ? ticket.completedAt ?? new Date().toISOString()
+    : null,
 });
 
 app.get('/api/matches', (_req, res) => {
@@ -39,9 +58,15 @@ app.get('/api/matches/export', (_req, res) => {
     .prepare('SELECT payload FROM matches ORDER BY datetime(createdAt) DESC')
     .all();
   const matches = rows.map((row) => JSON.parse(row.payload));
+  const improvementRows = db
+    .prepare(
+      'SELECT payload FROM improvements ORDER BY completed ASC, datetime(createdAt) DESC',
+    )
+    .all();
+  const improvements = improvementRows.map((row) => JSON.parse(row.payload));
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Content-Disposition', 'attachment; filename="matches-export.json"');
-  res.json({ exportedAt: new Date().toISOString(), matches });
+  res.json({ exportedAt: new Date().toISOString(), matches, improvements });
 });
 
 app.post('/api/matches', (req, res) => {
@@ -70,14 +95,33 @@ app.post('/api/matches', (req, res) => {
 app.post('/api/matches/import', (req, res) => {
   try {
     const payload = req.body;
-    const matches = Array.isArray(payload) ? payload : payload?.matches;
-    if (!Array.isArray(matches)) {
+    const matches = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.matches)
+        ? payload.matches
+        : [];
+    const improvements = Array.isArray(payload?.improvements)
+      ? payload.improvements
+      : [];
+    if (!Array.isArray(matches) || !Array.isArray(improvements)) {
       return res.status(400).json({ error: 'Ungültige Import-Datei' });
+    }
+    if (matches.length === 0 && improvements.length === 0) {
+      return res.status(400).json({ error: 'Import-Datei enthält keine Daten' });
     }
     const insert = db.prepare(
       `INSERT INTO matches (id, payload, createdAt)
        VALUES (@id, @payload, @createdAt)
        ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, createdAt = excluded.createdAt`
+    );
+    const insertImprovement = db.prepare(
+      `INSERT INTO improvements (id, payload, createdAt, completed, completedAt)
+       VALUES (@id, @payload, @createdAt, @completed, @completedAt)
+       ON CONFLICT(id) DO UPDATE SET
+         payload = excluded.payload,
+         createdAt = excluded.createdAt,
+         completed = excluded.completed,
+         completedAt = excluded.completedAt`,
     );
     const insertMany = db.transaction((items) => {
       items.forEach((match) => {
@@ -90,8 +134,26 @@ app.post('/api/matches/import', (req, res) => {
         });
       });
     });
-    insertMany(matches);
-    return res.json({ imported: matches.length });
+    const insertImprovements = db.transaction((items) => {
+      items.forEach((ticket) => {
+        if (!ticket?.id || !ticket?.title) return;
+        const normalized = normalizeImprovement(ticket);
+        insertImprovement.run({
+          id: normalized.id,
+          payload: JSON.stringify(normalized),
+          createdAt: normalized.createdAt,
+          completed: normalized.completed ? 1 : 0,
+          completedAt: normalized.completedAt,
+        });
+      });
+    });
+    if (matches.length > 0) {
+      insertMany(matches);
+    }
+    if (improvements.length > 0) {
+      insertImprovements(improvements);
+    }
+    return res.json({ imported: matches.length, improvements: improvements.length });
   } catch (error) {
     console.error('POST /api/matches/import failed', error);
     return res.status(500).json({ error: 'Import fehlgeschlagen' });
@@ -110,6 +172,88 @@ app.delete('/api/matches/:id', (req, res) => {
     return res.status(404).json({ error: 'Match nicht gefunden' });
   }
   res.status(204).send();
+});
+
+app.get('/api/improvements', (_req, res) => {
+  const rows = db
+    .prepare(
+      'SELECT payload FROM improvements ORDER BY completed ASC, datetime(createdAt) DESC',
+    )
+    .all();
+  const tickets = rows.map((row) => JSON.parse(row.payload));
+  res.json(tickets);
+});
+
+app.post('/api/improvements', (req, res) => {
+  try {
+    if (!req.body || Object.keys(req.body).length === 0) {
+      return res.status(400).json({ error: 'Ticket payload fehlt' });
+    }
+    const ticket = normalizeImprovement(req.body);
+    if (!ticket?.id) {
+      return res.status(400).json({ error: 'Ticket id fehlt' });
+    }
+    if (!ticket?.title) {
+      return res.status(400).json({ error: 'Ticket Titel fehlt' });
+    }
+    const payload = JSON.stringify(ticket);
+    const createdAt = ticket.createdAt;
+    const completed = ticket.completed ? 1 : 0;
+    const completedAt = ticket.completedAt;
+    db.prepare(
+      `INSERT INTO improvements (id, payload, createdAt, completed, completedAt)
+       VALUES (@id, @payload, @createdAt, @completed, @completedAt)
+       ON CONFLICT(id) DO UPDATE SET
+         payload = excluded.payload,
+         createdAt = excluded.createdAt,
+         completed = excluded.completed,
+         completedAt = excluded.completedAt`,
+    ).run({ id: ticket.id, payload, createdAt, completed, completedAt });
+    return res.status(201).json(ticket);
+  } catch (error) {
+    console.error('POST /api/improvements failed', error);
+    return res.status(500).json({ error: 'Ticket konnte nicht gespeichert werden' });
+  }
+});
+
+app.patch('/api/improvements/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const row = db
+      .prepare('SELECT payload FROM improvements WHERE id = ?')
+      .get(id);
+    if (!row) {
+      return res.status(404).json({ error: 'Ticket nicht gefunden' });
+    }
+    const current = JSON.parse(row.payload);
+    const completed = Boolean(req.body?.completed);
+    const updated = normalizeImprovement({
+      ...current,
+      completed,
+      completedAt: completed ? new Date().toISOString() : null,
+    });
+    db.prepare(
+      `UPDATE improvements
+       SET payload = @payload,
+           completed = @completed,
+           completedAt = @completedAt
+       WHERE id = @id`,
+    ).run({
+      id,
+      payload: JSON.stringify(updated),
+      completed: updated.completed ? 1 : 0,
+      completedAt: updated.completedAt,
+    });
+    return res.json(updated);
+  } catch (error) {
+    console.error('PATCH /api/improvements failed', error);
+    return res.status(500).json({ error: 'Ticket konnte nicht aktualisiert werden' });
+  }
+});
+
+app.delete('/api/improvements', (_req, res) => {
+  const result = db.prepare('DELETE FROM improvements').run();
+  res.json({ deleted: result.changes });
 });
 
 const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
