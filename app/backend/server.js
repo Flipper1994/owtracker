@@ -14,9 +14,78 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS matches (
     id TEXT PRIMARY KEY,
     payload TEXT NOT NULL,
-    createdAt TEXT NOT NULL
+    createdAt TEXT NOT NULL,
+    season TEXT
   );
 `);
+
+// Migration: Add season column if it doesn't exist
+try {
+  db.exec(`ALTER TABLE matches ADD COLUMN season TEXT`);
+} catch (e) {
+  // Column already exists
+}
+
+// Overwatch 2 Seasons (for migration)
+const OW_SEASONS = [
+  { id: 'S1', start: '2022-10-04' },
+  { id: 'S2', start: '2022-12-06' },
+  { id: 'S3', start: '2023-02-07' },
+  { id: 'S4', start: '2023-04-11' },
+  { id: 'S5', start: '2023-06-13' },
+  { id: 'S6', start: '2023-08-10' },
+  { id: 'S7', start: '2023-10-10' },
+  { id: 'S8', start: '2023-12-05' },
+  { id: 'S9', start: '2024-02-13' },
+  { id: 'S10', start: '2024-04-16' },
+  { id: 'S11', start: '2024-06-20' },
+  { id: 'S12', start: '2024-08-20' },
+  { id: 'S13', start: '2024-10-15' },
+  { id: 'S14', start: '2024-12-10' },
+  { id: 'S15', start: '2025-02-04' },
+  { id: 'S16', start: '2025-04-08' },
+  { id: 'S17', start: '2025-06-10' },
+  { id: 'S18', start: '2025-08-12' },
+  { id: 'S19', start: '2025-10-14' },
+  { id: 'S20', start: '2025-12-09' },
+  { id: 'S21', start: '2026-02-03' },
+];
+
+const getCurrentSeason = () => {
+  const now = new Date();
+  for (let i = OW_SEASONS.length - 1; i >= 0; i--) {
+    if (new Date(OW_SEASONS[i].start) <= now) {
+      return OW_SEASONS[i].id;
+    }
+  }
+  return OW_SEASONS[OW_SEASONS.length - 1].id;
+};
+
+// Migration: Update matches without season to current season
+const currentSeason = getCurrentSeason();
+const matchesWithoutSeason = db
+  .prepare('SELECT id, payload FROM matches WHERE season IS NULL')
+  .all();
+
+if (matchesWithoutSeason.length > 0) {
+  console.log(`Migrating ${matchesWithoutSeason.length} matches to season ${currentSeason}...`);
+  const updateMatch = db.prepare(
+    'UPDATE matches SET season = @season, payload = @payload WHERE id = @id'
+  );
+  const migrateAll = db.transaction((items) => {
+    items.forEach((row) => {
+      const match = JSON.parse(row.payload);
+      match.season = currentSeason;
+      updateMatch.run({
+        id: row.id,
+        season: currentSeason,
+        payload: JSON.stringify(match),
+      });
+    });
+  });
+  migrateAll(matchesWithoutSeason);
+  console.log('Migration complete.');
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS improvements (
@@ -36,12 +105,23 @@ db.exec(`
   );
 `);
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:12321',
+    'http://localhost:8080',
+    'https://owtracker.duckdns.org',
+    'https://owtracker.duckdns.org:12321',
+    'http://owtracker.duckdns.org',
+    'http://owtracker.duckdns.org:12321',
+  ],
+  credentials: true,
+}));
 app.use(express.json({ limit: '1mb' }));
 
 const normalizeMatch = (match) => ({
   ...match,
   createdAt: match.createdAt ?? new Date().toISOString(),
+  season: match.season ?? getCurrentSeason(),
 });
 
 const normalizeImprovement = (ticket) => ({
@@ -93,11 +173,12 @@ app.post('/api/matches', (req, res) => {
     }
     const payload = JSON.stringify(match);
     const createdAt = match.createdAt;
+    const season = match.season;
     db.prepare(
-      `INSERT INTO matches (id, payload, createdAt)
-       VALUES (@id, @payload, @createdAt)
-       ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, createdAt = excluded.createdAt`
-    ).run({ id: match.id, payload, createdAt });
+      `INSERT INTO matches (id, payload, createdAt, season)
+       VALUES (@id, @payload, @createdAt, @season)
+       ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, createdAt = excluded.createdAt, season = excluded.season`
+    ).run({ id: match.id, payload, createdAt, season });
     return res.status(201).json(match);
   } catch (error) {
     console.error('POST /api/matches failed', error);
@@ -123,9 +204,9 @@ app.post('/api/matches/import', (req, res) => {
       return res.status(400).json({ error: 'Import-Datei enthält keine Daten' });
     }
     const insert = db.prepare(
-      `INSERT INTO matches (id, payload, createdAt)
-       VALUES (@id, @payload, @createdAt)
-       ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, createdAt = excluded.createdAt`
+      `INSERT INTO matches (id, payload, createdAt, season)
+       VALUES (@id, @payload, @createdAt, @season)
+       ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, createdAt = excluded.createdAt, season = excluded.season`
     );
     const insertImprovement = db.prepare(
       `INSERT INTO improvements (id, payload, createdAt, completed, completedAt)
@@ -144,6 +225,7 @@ app.post('/api/matches/import', (req, res) => {
           id: normalized.id,
           payload: JSON.stringify(normalized),
           createdAt: normalized.createdAt,
+          season: normalized.season,
         });
       });
     });

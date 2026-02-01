@@ -31,6 +31,7 @@ type MatchEntry = {
   score?: number;
   players: PlayerEntry[];
   createdAt: string;
+  season?: string;
 };
 
 type ImprovementTicket = {
@@ -52,6 +53,41 @@ type MatchFilters = {
   result: 'Alle' | MatchResult;
   role: 'Alle' | Role;
   search: string;
+};
+
+// Overwatch 2 Seasons (Start: Oktober 2022, jede Season ~2 Monate)
+const OW_SEASONS = [
+  { id: 'S1', name: 'Season 1', start: '2022-10-04' },
+  { id: 'S2', name: 'Season 2', start: '2022-12-06' },
+  { id: 'S3', name: 'Season 3', start: '2023-02-07' },
+  { id: 'S4', name: 'Season 4', start: '2023-04-11' },
+  { id: 'S5', name: 'Season 5', start: '2023-06-13' },
+  { id: 'S6', name: 'Season 6', start: '2023-08-10' },
+  { id: 'S7', name: 'Season 7', start: '2023-10-10' },
+  { id: 'S8', name: 'Season 8', start: '2023-12-05' },
+  { id: 'S9', name: 'Season 9', start: '2024-02-13' },
+  { id: 'S10', name: 'Season 10', start: '2024-04-16' },
+  { id: 'S11', name: 'Season 11', start: '2024-06-20' },
+  { id: 'S12', name: 'Season 12', start: '2024-08-20' },
+  { id: 'S13', name: 'Season 13', start: '2024-10-15' },
+  { id: 'S14', name: 'Season 14', start: '2024-12-10' },
+  { id: 'S15', name: 'Season 15', start: '2025-02-04' },
+  { id: 'S16', name: 'Season 16', start: '2025-04-08' },
+  { id: 'S17', name: 'Season 17', start: '2025-06-10' },
+  { id: 'S18', name: 'Season 18', start: '2025-08-12' },
+  { id: 'S19', name: 'Season 19', start: '2025-10-14' },
+  { id: 'S20', name: 'Season 20', start: '2025-12-09' },
+  { id: 'S21', name: 'Season 21', start: '2026-02-03' },
+];
+
+const getCurrentSeason = () => {
+  const now = new Date();
+  for (let i = OW_SEASONS.length - 1; i >= 0; i--) {
+    if (new Date(OW_SEASONS[i].start) <= now) {
+      return OW_SEASONS[i].id;
+    }
+  }
+  return OW_SEASONS[OW_SEASONS.length - 1].id;
 };
 
 const generateId = () => {
@@ -200,6 +236,7 @@ const createMatch = (): MatchEntry => ({
   map: '',
   players: [createPlayer(generateId())],
   createdAt: new Date().toISOString(),
+  season: getCurrentSeason(),
 });
 
 export default function MatchTrackerPage() {
@@ -227,6 +264,8 @@ export default function MatchTrackerPage() {
     description: '',
   });
   
+  const [selectedSeason, setSelectedSeason] = useState<string>(() => getCurrentSeason());
+  const [showProDialog, setShowProDialog] = useState(false);
   const [playerSort, setPlayerSort] = useState<Record<string, SortState>>(() =>
     Object.fromEntries(
       PLAYER_NAMES.map((name) => [name, { key: 'date', direction: 'desc' }]),
@@ -253,18 +292,22 @@ export default function MatchTrackerPage() {
     })),
   });
 
+  const seasonFilteredMatches = useMemo(() => {
+    return matches.filter((match) => match.season === selectedSeason);
+  }, [matches, selectedSeason]);
+
   const roleFilteredMatches = useMemo(() => {
-    if (roleFilter === 'Alle') return matches;
-    return matches.filter((match) =>
+    if (roleFilter === 'Alle') return seasonFilteredMatches;
+    return seasonFilteredMatches.filter((match) =>
       match.players.some((player) => player.role === roleFilter),
     );
-  }, [matches, roleFilter]);
+  }, [seasonFilteredMatches, roleFilter]);
 
   const sortedMatches = useMemo(() => {
-    return [...matches].sort(
+    return [...seasonFilteredMatches].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
-  }, [matches]);
+  }, [seasonFilteredMatches]);
 
   const filteredMatches = useMemo(() => {
     const search = matchesFilters.search.trim().toLowerCase();
@@ -543,7 +586,7 @@ export default function MatchTrackerPage() {
 
   const heroStats = useMemo(() => {
     const stats = new Map<string, { hero: string; role: Role; wins: number; losses: number }>();
-    matches.forEach((match) => {
+    seasonFilteredMatches.forEach((match) => {
       match.players.forEach((player) => {
         if (!player.character) return;
         const key = player.character;
@@ -564,7 +607,7 @@ export default function MatchTrackerPage() {
         winRate: total === 0 ? 0 : Math.round((entry.wins / total) * 100),
       };
     });
-  }, [matches]);
+  }, [seasonFilteredMatches]);
 
   const bestHeroes = useMemo(() => {
     return [...heroStats]
@@ -581,14 +624,14 @@ export default function MatchTrackerPage() {
   }, [heroStats]);
 
   const overallStats = useMemo(() => {
-    const totalMatches = matches.length;
-    const wins = matches.filter((m) => m.result === 'Win').length;
+    const totalMatches = seasonFilteredMatches.length;
+    const wins = seasonFilteredMatches.filter((m) => m.result === 'Win').length;
     const losses = totalMatches - wins;
     const winRate = totalMatches === 0 ? 0 : Math.round((wins / totalMatches) * 100);
-    const stadiumMatches = matches.filter((m) => m.queue === 'Stadion').length;
-    const ranglisteMatches = matches.filter((m) => m.queue === 'Rangliste').length;
-    const stadiumWins = matches.filter((m) => m.queue === 'Stadion' && m.result === 'Win').length;
-    const ranglisteWins = matches.filter((m) => m.queue === 'Rangliste' && m.result === 'Win').length;
+    const stadiumMatches = seasonFilteredMatches.filter((m) => m.queue === 'Stadion').length;
+    const ranglisteMatches = seasonFilteredMatches.filter((m) => m.queue === 'Rangliste').length;
+    const stadiumWins = seasonFilteredMatches.filter((m) => m.queue === 'Stadion' && m.result === 'Win').length;
+    const ranglisteWins = seasonFilteredMatches.filter((m) => m.queue === 'Rangliste' && m.result === 'Win').length;
     const stadiumWinRate = stadiumMatches === 0 ? 0 : Math.round((stadiumWins / stadiumMatches) * 100);
     const ranglisteWinRate = ranglisteMatches === 0 ? 0 : Math.round((ranglisteWins / ranglisteMatches) * 100);
     return {
@@ -601,7 +644,7 @@ export default function MatchTrackerPage() {
       stadiumWinRate,
       ranglisteWinRate,
     };
-  }, [matches]);
+  }, [seasonFilteredMatches]);
 
   const updateDraft = (update: Partial<MatchEntry>) => {
     setDraft((prev) => ({ ...prev, ...update }));
@@ -983,6 +1026,20 @@ export default function MatchTrackerPage() {
           <p className="banner-subtitle">
             Tracke deine Rangliste- und Stadion-Matches, Winrates und Squad-Picks.
           </p>
+          <div className="banner-season-selector">
+            <label htmlFor="season-select">Season:</label>
+            <select
+              id="season-select"
+              value={selectedSeason}
+              onChange={(event) => setSelectedSeason(event.target.value)}
+            >
+              {OW_SEASONS.slice().reverse().map((season) => (
+                <option key={season.id} value={season.id}>
+                  {season.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
         <Link to="/archive" className="banner-corner-link">📁 Archiv</Link>
       </section>
@@ -993,16 +1050,25 @@ export default function MatchTrackerPage() {
             <h3>Rollenfilter</h3>
             <p className="muted">Alle Dashboards beziehen sich auf diese Rolle.</p>
           </div>
-          <select
-            className={roleFilter === 'Alle' ? '' : `role-select ${ROLE_CLASSES[roleFilter]}`}
-            value={roleFilter}
-            onChange={(event) => setRoleFilter(event.target.value as Role | 'Alle')}
-          >
-            <option value="Alle">Alle Rollen</option>
-            <option value="Tank">{ROLE_LABELS.Tank}</option>
-            <option value="DPS">{ROLE_LABELS.DPS}</option>
-            <option value="Support">{ROLE_LABELS.Support}</option>
-          </select>
+          <div className="role-filter-controls">
+            <select
+              className={roleFilter === 'Alle' ? '' : `role-select ${ROLE_CLASSES[roleFilter]}`}
+              value={roleFilter}
+              onChange={(event) => setRoleFilter(event.target.value as Role | 'Alle')}
+            >
+              <option value="Alle">Alle Rollen</option>
+              <option value="Tank">{ROLE_LABELS.Tank}</option>
+              <option value="DPS">{ROLE_LABELS.DPS}</option>
+              <option value="Support">{ROLE_LABELS.Support}</option>
+            </select>
+            <button
+              type="button"
+              className="pro-button"
+              onClick={() => setShowProDialog(true)}
+            >
+              ⭐ Erweiterte seasonübergreifende Statistik
+            </button>
+          </div>
         </div>
         <div className="ow-card team-card">
           <div className="summary-header">
@@ -2076,6 +2142,64 @@ export default function MatchTrackerPage() {
           </div>
         </details>
       </section>
+
+      {showProDialog && (
+        <div
+          className="pro-dialog-overlay"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setShowProDialog(false)}
+        >
+          <div
+            className="pro-dialog"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="pro-dialog-header">
+              <span className="pro-dialog-icon">⭐</span>
+              <h2>OW Tracker Pro</h2>
+            </div>
+            <div className="pro-dialog-body">
+              <p className="pro-dialog-feature">
+                <strong>Season-übergreifende Auswertung</strong>
+              </p>
+              <p>
+                Mit OW Tracker Pro kannst du deine Statistiken über alle Seasons hinweg
+                analysieren und vergleichen. Erkenne Trends, verfolge deine Entwicklung
+                und werde zum ultimativen Overwatch-Strategen!
+              </p>
+              <div className="pro-dialog-price">
+                <span className="price-amount">4,99€</span>
+                <span className="price-period">/ Monat</span>
+              </div>
+              <ul className="pro-dialog-features">
+                <li>Season-übergreifende Statistiken</li>
+                <li>Erweiterte Helden-Analysen</li>
+                <li>Team-Performance-Trends</li>
+                <li>Exklusive Pro-Badges</li>
+              </ul>
+            </div>
+            <div className="pro-dialog-actions">
+              <button
+                type="button"
+                className="pro-subscribe-btn"
+                onClick={() => {
+                  addToast('Nice try! Pro-Abo kommt bald... vielleicht.');
+                  setShowProDialog(false);
+                }}
+              >
+                Jetzt abonnieren
+              </button>
+              <button
+                type="button"
+                className="pro-cancel-btn"
+                onClick={() => setShowProDialog(false)}
+              >
+                Nein danke
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
