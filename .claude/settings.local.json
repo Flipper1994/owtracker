@@ -6,7 +6,9 @@
       "Bash(netstat:*)",
       "Bash(tasklist:*)",
       "Bash(curl:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(npm install:*)",
+      "Bash(docker compose:*)"
     ]
   }
 }
