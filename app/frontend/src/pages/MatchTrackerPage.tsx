@@ -47,20 +47,6 @@ type ImprovementDraft = {
   description: string;
 };
 
-type ArchiveLink = {
-  id: string;
-  title: string;
-  url: string;
-  description?: string;
-  createdAt: string;
-};
-
-type ArchiveDraft = {
-  title: string;
-  url: string;
-  description: string;
-};
-
 type MatchFilters = {
   queue: 'Alle' | 'Rangliste' | 'Stadion';
   result: 'Alle' | MatchResult;
