@@ -28,6 +28,14 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS archive_links (
+    id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    createdAt TEXT NOT NULL
+  );
+`);
+
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
@@ -43,6 +51,11 @@ const normalizeImprovement = (ticket) => ({
   completedAt: ticket.completed
     ? ticket.completedAt ?? new Date().toISOString()
     : null,
+});
+
+const normalizeArchiveLink = (link) => ({
+  ...link,
+  createdAt: link.createdAt ?? new Date().toISOString(),
 });
 
 app.get('/api/matches', (_req, res) => {
@@ -254,6 +267,57 @@ app.patch('/api/improvements/:id', (req, res) => {
 app.delete('/api/improvements', (_req, res) => {
   const result = db.prepare('DELETE FROM improvements').run();
   res.json({ deleted: result.changes });
+});
+
+app.get('/api/archive-links', (_req, res) => {
+  const rows = db
+    .prepare('SELECT payload FROM archive_links ORDER BY datetime(createdAt) DESC')
+    .all();
+  const links = rows.map((row) => JSON.parse(row.payload));
+  res.json(links);
+});
+
+app.post('/api/archive-links', (req, res) => {
+  try {
+    if (!req.body || Object.keys(req.body).length === 0) {
+      return res.status(400).json({ error: 'Link payload fehlt' });
+    }
+    const link = normalizeArchiveLink(req.body);
+    if (!link?.id) {
+      return res.status(400).json({ error: 'Link id fehlt' });
+    }
+    if (!link?.title) {
+      return res.status(400).json({ error: 'Link Titel fehlt' });
+    }
+    if (!link?.url) {
+      return res.status(400).json({ error: 'Link URL fehlt' });
+    }
+    const payload = JSON.stringify(link);
+    const createdAt = link.createdAt;
+    db.prepare(
+      `INSERT INTO archive_links (id, payload, createdAt)
+       VALUES (@id, @payload, @createdAt)
+       ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, createdAt = excluded.createdAt`,
+    ).run({ id: link.id, payload, createdAt });
+    return res.status(201).json(link);
+  } catch (error) {
+    console.error('POST /api/archive-links failed', error);
+    return res.status(500).json({ error: 'Link konnte nicht gespeichert werden' });
+  }
+});
+
+app.delete('/api/archive-links', (_req, res) => {
+  const result = db.prepare('DELETE FROM archive_links').run();
+  res.json({ deleted: result.changes });
+});
+
+app.delete('/api/archive-links/:id', (req, res) => {
+  const { id } = req.params;
+  const result = db.prepare('DELETE FROM archive_links WHERE id = ?').run(id);
+  if (result.changes === 0) {
+    return res.status(404).json({ error: 'Link nicht gefunden' });
+  }
+  res.status(204).send();
 });
 
 const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');

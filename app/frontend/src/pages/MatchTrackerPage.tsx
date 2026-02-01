@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 type MatchResult = 'Win' | 'Lose';
 type Role = 'DPS' | 'Support' | 'Tank';
@@ -27,6 +28,7 @@ type MatchEntry = {
   result: MatchResult;
   rank?: string;
   map?: string;
+  score?: number;
   players: PlayerEntry[];
   createdAt: string;
 };
@@ -43,6 +45,27 @@ type ImprovementTicket = {
 type ImprovementDraft = {
   title: string;
   description: string;
+};
+
+type ArchiveLink = {
+  id: string;
+  title: string;
+  url: string;
+  description?: string;
+  createdAt: string;
+};
+
+type ArchiveDraft = {
+  title: string;
+  url: string;
+  description: string;
+};
+
+type MatchFilters = {
+  queue: 'Alle' | 'Rangliste' | 'Stadion';
+  result: 'Alle' | MatchResult;
+  role: 'Alle' | Role;
+  search: string;
 };
 
 const generateId = () => {
@@ -79,11 +102,25 @@ const COMPETITIVE_RANKS = COMPETITIVE_TIERS.flatMap((tier) =>
 
 const STADIUM_RANKS = [
   'Rookie',
-  'Challenger',
-  'Contender',
+  'Novice',
+  'Anwärter',
   'Elite',
-  'Legend',
+  'Pro',
+  'All-Star',
+  'Legende',
+  'Herausforderer',
 ];
+
+const STADIUM_RANK_ICONS: Record<string, string> = {
+  'Rookie': '🥉',
+  'Novice': '🎖️',
+  'Anwärter': '⭐',
+  'Elite': '💎',
+  'Pro': '🏆',
+  'All-Star': '⚡',
+  'Legende': '👑',
+  'Herausforderer': '🔥',
+};
 
 const RANK_OPTIONS: Record<string, string[]> = {
   Rangliste: COMPETITIVE_RANKS,
@@ -96,6 +133,7 @@ const ROLE_CHARACTERS: Record<Role, string[]> = {
     'Bastion',
     'Cassidy',
     'Echo',
+    'Freya',
     'Genji',
     'Hanzo',
     'Junkrat',
@@ -122,6 +160,7 @@ const ROLE_CHARACTERS: Record<Role, string[]> = {
     'Lúcio',
     'Mercy',
     'Moira',
+    'Wuyang',
     'Zenyatta',
   ],
   Tank: [
@@ -169,7 +208,7 @@ const createPlayer = (id: string, usedNames: string[] = []): PlayerEntry => ({
 
 const createMatch = (): MatchEntry => ({
   id: generateId(),
-  queue: 'Rangliste',
+  queue: 'Stadion',
   result: 'Win',
   rank: '',
   map: '',
@@ -186,6 +225,14 @@ export default function MatchTrackerPage() {
   const [importing, setImporting] = useState(false);
   const [ultimateUnlocked, setUltimateUnlocked] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<MatchEntry | null>(null);
+  const [showAllMatches, setShowAllMatches] = useState(false);
+  const [matchesPage, setMatchesPage] = useState(1);
+  const [matchesFilters, setMatchesFilters] = useState<MatchFilters>({
+    queue: 'Alle',
+    result: 'Alle',
+    role: 'Alle',
+    search: '',
+  });
   const [improvements, setImprovements] = useState<ImprovementTicket[]>([]);
   const [improvementsLoading, setImprovementsLoading] = useState(false);
   const [improvementsSubmitting, setImprovementsSubmitting] = useState(false);
@@ -193,11 +240,16 @@ export default function MatchTrackerPage() {
     title: '',
     description: '',
   });
+  
   const [playerSort, setPlayerSort] = useState<Record<string, SortState>>(() =>
     Object.fromEntries(
       PLAYER_NAMES.map((name) => [name, { key: 'date', direction: 'desc' }]),
     ),
   );
+  const [playerPage, setPlayerPage] = useState<Record<string, number>>(() =>
+    Object.fromEntries(PLAYER_NAMES.map((name) => [name, 1])),
+  );
+  const playerPageSize = 5;
 
   const addToast = useCallback((message: string) => {
     const id = generateId();
@@ -221,6 +273,53 @@ export default function MatchTrackerPage() {
       match.players.some((player) => player.role === roleFilter),
     );
   }, [matches, roleFilter]);
+
+  const sortedMatches = useMemo(() => {
+    return [...matches].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  }, [matches]);
+
+  const filteredMatches = useMemo(() => {
+    const search = matchesFilters.search.trim().toLowerCase();
+    return sortedMatches.filter((match) => {
+      if (matchesFilters.queue !== 'Alle' && match.queue !== matchesFilters.queue) {
+        return false;
+      }
+      if (matchesFilters.result !== 'Alle' && match.result !== matchesFilters.result) {
+        return false;
+      }
+      if (
+        matchesFilters.role !== 'Alle' &&
+        !match.players.some((player) => player.role === matchesFilters.role)
+      ) {
+        return false;
+      }
+      if (!search) return true;
+      const haystack = [
+        match.queue,
+        match.rank,
+        match.map,
+        match.result,
+        ...match.players.map((player) => player.name),
+        ...match.players.map((player) => player.character ?? ''),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(search);
+    });
+  }, [matchesFilters, sortedMatches]);
+
+  const matchesPageSize = 10;
+  const totalMatchPages = Math.max(1, Math.ceil(filteredMatches.length / matchesPageSize));
+  const activeMatchPage = Math.min(matchesPage, totalMatchPages);
+  const paginatedMatches = useMemo(() => {
+    const start = (activeMatchPage - 1) * matchesPageSize;
+    return filteredMatches.slice(start, start + matchesPageSize);
+  }, [activeMatchPage, filteredMatches]);
+
+  const latestMatches = useMemo(() => sortedMatches.slice(0, 5), [sortedMatches]);
 
   const loadMatches = useCallback(async () => {
     try {
@@ -268,6 +367,8 @@ export default function MatchTrackerPage() {
     void loadImprovements();
   }, [loadImprovements]);
 
+  
+
   useEffect(() => {
     if (ultimateUnlocked) return;
     const handleKey = (event: KeyboardEvent) => {
@@ -289,6 +390,11 @@ export default function MatchTrackerPage() {
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [selectedMatch]);
+
+  useEffect(() => {
+    if (!showAllMatches) return;
+    setMatchesPage(1);
+  }, [matchesFilters, showAllMatches]);
 
   const winRate = useMemo(() => {
     if (roleFilteredMatches.length === 0) return 0;
@@ -320,18 +426,36 @@ export default function MatchTrackerPage() {
       const total = playerMatches.length;
       const rate = total === 0 ? 0 : Math.round((wins / total) * 100);
       const roleCounts = new Map<Role, number>();
-      const characterCounts = new Map<string, number>();
+      const roleWins = new Map<Role, number>();
+      const characterCounts = new Map<string, { total: number; wins: number; role: Role }>();
+
+      // Highscore aus Stadion-Matches berechnen
+      const stadiumScores = playerMatches
+        .filter((match) => match.queue === 'Stadion' && typeof match.score === 'number')
+        .map((match) => match.score as number);
+      const highscore = stadiumScores.length > 0 ? Math.max(...stadiumScores) : null;
 
       playerMatches.forEach((match) => {
         const entry = match.players.find((player) => player.name === name);
         if (!entry) return;
         roleCounts.set(entry.role, (roleCounts.get(entry.role) ?? 0) + 1);
-        if (entry.character) {
-          characterCounts.set(
-            entry.character,
-            (characterCounts.get(entry.character) ?? 0) + 1,
-          );
+        if (match.result === 'Win') {
+          roleWins.set(entry.role, (roleWins.get(entry.role) ?? 0) + 1);
         }
+        if (entry.character) {
+          const current = characterCounts.get(entry.character) ?? { total: 0, wins: 0, role: entry.role };
+          current.total += 1;
+          if (match.result === 'Win') current.wins += 1;
+          characterCounts.set(entry.character, current);
+        }
+      });
+
+      // Winrate pro Rolle berechnen
+      const roleStats = (['Tank', 'DPS', 'Support'] as Role[]).map((role) => {
+        const count = roleCounts.get(role) ?? 0;
+        const winsForRole = roleWins.get(role) ?? 0;
+        const winRate = count === 0 ? 0 : Math.round((winsForRole / count) * 100);
+        return { role, count, wins: winsForRole, winRate };
       });
 
       let topRole: Role | '-' = '-';
@@ -343,14 +467,34 @@ export default function MatchTrackerPage() {
         }
       });
 
+      // Character Stats mit Winrate
+      const characterStats = Array.from(characterCounts.entries()).map(([char, data]) => ({
+        character: char,
+        total: data.total,
+        wins: data.wins,
+        role: data.role,
+        winRate: data.total === 0 ? 0 : Math.round((data.wins / data.total) * 100),
+      }));
+
+      // Top Character (meistgespielt)
       let topCharacter: string | '-' = '-';
       let topCharacterCount = 0;
-      characterCounts.forEach((count, character) => {
-        if (count > topCharacterCount) {
-          topCharacter = character;
-          topCharacterCount = count;
+      characterStats.forEach((stat) => {
+        if (stat.total > topCharacterCount) {
+          topCharacter = stat.character;
+          topCharacterCount = stat.total;
         }
       });
+
+      // Beste und schlechteste Character nach Winrate (min 2 Spiele)
+      const eligibleChars = characterStats.filter((c) => c.total >= 2);
+      const bestChar = eligibleChars.length > 0
+        ? eligibleChars.reduce((a, b) => (a.winRate > b.winRate ? a : b))
+        : null;
+      const worstChar = eligibleChars.length > 0
+        ? eligibleChars.reduce((a, b) => (a.winRate < b.winRate ? a : b))
+        : null;
+
       return {
         name,
         wins,
@@ -361,6 +505,10 @@ export default function MatchTrackerPage() {
         topRoleCount,
         topCharacter,
         topCharacterCount,
+        highscore,
+        roleStats,
+        bestChar,
+        worstChar,
       };
     });
   }, [roleFilteredMatches, roleFilter]);
@@ -406,6 +554,68 @@ export default function MatchTrackerPage() {
       .sort((a, b) => a.winRate - b.winRate)
       .slice(0, 3);
   }, [comboStats]);
+
+  const heroStats = useMemo(() => {
+    const stats = new Map<string, { hero: string; role: Role; wins: number; losses: number }>();
+    matches.forEach((match) => {
+      match.players.forEach((player) => {
+        if (!player.character) return;
+        const key = player.character;
+        const entry = stats.get(key) ?? { hero: player.character, role: player.role, wins: 0, losses: 0 };
+        if (match.result === 'Win') {
+          entry.wins += 1;
+        } else {
+          entry.losses += 1;
+        }
+        stats.set(key, entry);
+      });
+    });
+    return Array.from(stats.values()).map((entry) => {
+      const total = entry.wins + entry.losses;
+      return {
+        ...entry,
+        total,
+        winRate: total === 0 ? 0 : Math.round((entry.wins / total) * 100),
+      };
+    });
+  }, [matches]);
+
+  const bestHeroes = useMemo(() => {
+    return [...heroStats]
+      .filter((h) => h.total >= 2)
+      .sort((a, b) => b.winRate - a.winRate || b.total - a.total)
+      .slice(0, 5);
+  }, [heroStats]);
+
+  const worstHeroes = useMemo(() => {
+    return [...heroStats]
+      .filter((h) => h.total >= 2)
+      .sort((a, b) => a.winRate - b.winRate || b.total - a.total)
+      .slice(0, 5);
+  }, [heroStats]);
+
+  const overallStats = useMemo(() => {
+    const totalMatches = matches.length;
+    const wins = matches.filter((m) => m.result === 'Win').length;
+    const losses = totalMatches - wins;
+    const winRate = totalMatches === 0 ? 0 : Math.round((wins / totalMatches) * 100);
+    const stadiumMatches = matches.filter((m) => m.queue === 'Stadion').length;
+    const ranglisteMatches = matches.filter((m) => m.queue === 'Rangliste').length;
+    const stadiumWins = matches.filter((m) => m.queue === 'Stadion' && m.result === 'Win').length;
+    const ranglisteWins = matches.filter((m) => m.queue === 'Rangliste' && m.result === 'Win').length;
+    const stadiumWinRate = stadiumMatches === 0 ? 0 : Math.round((stadiumWins / stadiumMatches) * 100);
+    const ranglisteWinRate = ranglisteMatches === 0 ? 0 : Math.round((ranglisteWins / ranglisteMatches) * 100);
+    return {
+      totalMatches,
+      wins,
+      losses,
+      winRate,
+      stadiumMatches,
+      ranglisteMatches,
+      stadiumWinRate,
+      ranglisteWinRate,
+    };
+  }, [matches]);
 
   const updateDraft = (update: Partial<MatchEntry>) => {
     setDraft((prev) => ({ ...prev, ...update }));
@@ -597,6 +807,8 @@ export default function MatchTrackerPage() {
     }
   };
 
+  
+
   const getPlayerMatches = (name: string) =>
     roleFilteredMatches
       .filter((match) =>
@@ -786,6 +998,7 @@ export default function MatchTrackerPage() {
             Tracke deine Rangliste- und Stadion-Matches, Winrates und Squad-Picks.
           </p>
         </div>
+        <Link to="/archive" className="banner-corner-link">📁 Archiv</Link>
       </section>
 
       <section className="dashboard-grid">
@@ -934,106 +1147,187 @@ export default function MatchTrackerPage() {
                   <strong>{player.losses}</strong>
                 </div>
               </div>
-              <div className="player-top-picks">
-                <div>
-                  <span>Top Rolle</span>
-                  <strong>
-                    <span className={getRoleClass(player.topRole)}>
-                      {formatRoleLabel(player.topRole)}
-                    </span>{' '}
-                    · {player.topRoleCount}
-                  </strong>
-                </div>
-                <div>
-                  <span>Top Character</span>
-                  <strong>
-                    {player.topCharacter} · {player.topCharacterCount}
-                  </strong>
+              <div className="player-role-winrates">
+                <span className="section-label">Winrate je Rolle</span>
+                <div className="role-winrate-grid">
+                  {player.roleStats.map((rs) => (
+                    <div key={rs.role} className={`role-winrate-item ${ROLE_CLASSES[rs.role]}`}>
+                      <span className="role-icon">{ROLE_LABELS[rs.role].split(' ')[0]}</span>
+                      <span className="role-rate">{rs.count > 0 ? `${rs.winRate}%` : '-'}</span>
+                      <span className="role-games">{rs.count}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div className="player-table-wrapper">
-                <table className="player-table">
-                  <thead>
-                    <tr>
-                      <th>
-                        <button
-                          type="button"
-                          onClick={() => toggleSort(player.name, 'date')}
-                        >
-                          Datum {getSortIndicator(playerSort[player.name], 'date')}
-                        </button>
-                      </th>
-                      <th>
-                        <button
-                          type="button"
-                          onClick={() => toggleSort(player.name, 'result')}
-                        >
-                          Win {getSortIndicator(playerSort[player.name], 'result')}
-                        </button>
-                      </th>
-                      <th>
-                        <button
-                          type="button"
-                          onClick={() => toggleSort(player.name, 'queue')}
-                        >
-                          Modus {getSortIndicator(playerSort[player.name], 'queue')}
-                        </button>
-                      </th>
-                      <th>
-                        <button
-                          type="button"
-                          onClick={() => toggleSort(player.name, 'role')}
-                        >
-                          Rolle {getSortIndicator(playerSort[player.name], 'role')}
-                        </button>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(() => {
-                      const playerMatches = getPlayerMatches(player.name);
-                      if (playerMatches.length === 0) {
-                        return (
+              <div className="player-picks-grid">
+                <div className="picks-column">
+                  <span className="section-label">🏆 Tops</span>
+                  <div className="pick-item">
+                    <span className="pick-label">Rolle</span>
+                    <span className="pick-value">
+                      <span className={getRoleClass(player.topRole)}>
+                        {formatRoleLabel(player.topRole)}
+                      </span>
+                      <span className="pick-count">{player.topRoleCount}×</span>
+                    </span>
+                  </div>
+                  <div className="pick-item">
+                    <span className="pick-label">Held</span>
+                    <span className="pick-value">
+                      {player.bestChar ? (
+                        <>
+                          {player.bestChar.character}
+                          <span className="pick-rate win">{player.bestChar.winRate}%</span>
+                        </>
+                      ) : '-'}
+                    </span>
+                  </div>
+                </div>
+                <div className="picks-column">
+                  <span className="section-label">📉 Flops</span>
+                  <div className="pick-item">
+                    <span className="pick-label">Held</span>
+                    <span className="pick-value">
+                      {player.worstChar ? (
+                        <>
+                          {player.worstChar.character}
+                          <span className="pick-rate lose">{player.worstChar.winRate}%</span>
+                        </>
+                      ) : '-'}
+                    </span>
+                  </div>
+                  <div className="pick-item">
+                    <span className="pick-label">🏟️ Highscore</span>
+                    <span className={`pick-value ${player.highscore ? 'highscore-value' : ''}`}>
+                      {player.highscore !== null ? player.highscore.toLocaleString() : '-'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              {(() => {
+                const allPlayerMatches = getPlayerMatches(player.name);
+                const sortedPlayerMatches = sortMatches(allPlayerMatches, playerSort[player.name]);
+                const totalPages = Math.max(1, Math.ceil(sortedPlayerMatches.length / playerPageSize));
+                const currentPage = Math.min(playerPage[player.name] || 1, totalPages);
+                const paginatedPlayerMatches = sortedPlayerMatches.slice(
+                  (currentPage - 1) * playerPageSize,
+                  currentPage * playerPageSize,
+                );
+                return (
+                  <>
+                    <div className="player-table-wrapper">
+                      <table className="player-table">
+                        <thead>
                           <tr>
-                            <td colSpan={4} className="empty-cell">
-                              noch keine Einträge
-                            </td>
+                            <th>
+                              <button
+                                type="button"
+                                onClick={() => toggleSort(player.name, 'date')}
+                              >
+                                Datum {getSortIndicator(playerSort[player.name], 'date')}
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                onClick={() => toggleSort(player.name, 'result')}
+                              >
+                                Win {getSortIndicator(playerSort[player.name], 'result')}
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                onClick={() => toggleSort(player.name, 'queue')}
+                              >
+                                Modus {getSortIndicator(playerSort[player.name], 'queue')}
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                onClick={() => toggleSort(player.name, 'role')}
+                              >
+                                Rolle {getSortIndicator(playerSort[player.name], 'role')}
+                              </button>
+                            </th>
                           </tr>
-                        );
-                      }
-                      return sortMatches(playerMatches, playerSort[player.name]).map((match) => (
-                        <tr
-                          key={match.id}
-                          className="player-table-row"
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setSelectedMatch(match)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
-                              event.preventDefault();
-                              setSelectedMatch(match);
-                            }
-                          }}
+                        </thead>
+                        <tbody>
+                          {paginatedPlayerMatches.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} className="empty-cell">
+                                noch keine Einträge
+                              </td>
+                            </tr>
+                          ) : (
+                            paginatedPlayerMatches.map((match) => (
+                              <tr
+                                key={match.id}
+                                className="player-table-row"
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => setSelectedMatch(match)}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    setSelectedMatch(match);
+                                  }
+                                }}
+                              >
+                                <td data-label="Datum">
+                                  {new Date(match.createdAt).toLocaleDateString()}
+                                </td>
+                                <td
+                                  data-label="Ergebnis"
+                                  className={match.result === 'Win' ? 'win' : 'lose'}
+                                >
+                                  {match.result}
+                                </td>
+                                <td data-label="Modus">{match.queue}</td>
+                                <td data-label="Rolle" className="role-cell">
+                                  <span className={match.playerRoleClass}>{match.playerRoleDisplay}</span>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                    {totalPages > 1 && (
+                      <div className="player-table-pagination">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPlayerPage((prev) => ({
+                              ...prev,
+                              [player.name]: Math.max(1, currentPage - 1),
+                            }))
+                          }
+                          disabled={currentPage === 1}
                         >
-                          <td data-label="Datum">
-                            {new Date(match.createdAt).toLocaleDateString()}
-                          </td>
-                          <td
-                            data-label="Ergebnis"
-                            className={match.result === 'Win' ? 'win' : 'lose'}
-                          >
-                            {match.result}
-                          </td>
-                          <td data-label="Modus">{match.queue}</td>
-                          <td data-label="Rolle" className="role-cell">
-                            <span className={match.playerRoleClass}>{match.playerRoleDisplay}</span>
-                          </td>
-                        </tr>
-                      ));
-                    })()}
-                  </tbody>
-                </table>
-              </div>
+                          ◀
+                        </button>
+                        <span>
+                          {currentPage} / {totalPages}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPlayerPage((prev) => ({
+                              ...prev,
+                              [player.name]: Math.min(totalPages, currentPage + 1),
+                            }))
+                          }
+                          disabled={currentPage === totalPages}
+                        >
+                          ▶
+                        </button>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           ))}
         </div>
@@ -1193,7 +1487,9 @@ export default function MatchTrackerPage() {
                   <option value="">Kein Rang</option>
                   {(RANK_OPTIONS[draft.queue] ?? COMPETITIVE_RANKS).map((rank) => (
                     <option key={rank} value={rank}>
-                      {rank}
+                      {draft.queue === 'Stadion' && STADIUM_RANK_ICONS[rank]
+                        ? `${STADIUM_RANK_ICONS[rank]} ${rank}`
+                        : rank}
                     </option>
                   ))}
                 </select>
@@ -1208,6 +1504,24 @@ export default function MatchTrackerPage() {
                 />
               </label>
             </div>
+            {draft.queue === 'Stadion' && (
+              <div className="form-row">
+                <label>
+                  Punktestand (optional)
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="z.B. 12500"
+                    value={draft.score ?? ''}
+                    onChange={(event) =>
+                      updateDraft({
+                        score: event.target.value ? parseInt(event.target.value, 10) : undefined,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+            )}
             <div className="players">
               <div className="players-header">
                 <h3>Spieler im Match</h3>
@@ -1296,12 +1610,34 @@ export default function MatchTrackerPage() {
         </section>
 
         <section className="ow-card matches">
-          <h2>Letzte Matches</h2>
-          {matches.length === 0 ? (
+          <div className="matches-header">
+            <div>
+              <h2>Letzte Matches</h2>
+              <span className="muted">Zeigt die letzten 5 Einträge</span>
+            </div>
+            <button
+              type="button"
+              className="matches-view-all-btn"
+              onClick={() => setShowAllMatches(true)}
+            >
+              <span>📊 Alle Matches</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M9 5l7 7-7 7"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+          {latestMatches.length === 0 ? (
             <p className="empty">Noch keine Matches eingetragen.</p>
           ) : (
             <ul className="match-list">
-              {matches.map((match) => (
+              {latestMatches.map((match) => (
                 <li key={match.id}>
                   <div className="match-main">
                     <strong>{match.result}</strong>
@@ -1373,6 +1709,266 @@ export default function MatchTrackerPage() {
         </section>
       </main>
 
+      {showAllMatches && (
+        <div
+          className="fullscreen-overlay"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="fullscreen-overlay-content">
+            <header className="fullscreen-header">
+              <div className="fullscreen-header-left">
+                <h2>📊 Match-Übersicht</h2>
+                <span className="fullscreen-subtitle">
+                  {filteredMatches.length} Matches gefunden
+                </span>
+              </div>
+              <button
+                type="button"
+                className="fullscreen-close-btn"
+                onClick={() => setShowAllMatches(false)}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M6 6l12 12M18 6L6 18"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <span>Schließen</span>
+              </button>
+            </header>
+
+            <div className="fullscreen-body">
+              <section className="stats-overview-section">
+                <div className="stats-cards-row">
+                  <div className="stat-card-large">
+                    <div className="stat-icon">🎮</div>
+                    <div className="stat-info">
+                      <span className="stat-number">{overallStats.totalMatches}</span>
+                      <span className="stat-title">Matches</span>
+                    </div>
+                  </div>
+                  <div className="stat-card-large accent">
+                    <div className="stat-icon">📈</div>
+                    <div className="stat-info">
+                      <span className="stat-number">{overallStats.winRate}%</span>
+                      <span className="stat-title">Winrate</span>
+                    </div>
+                  </div>
+                  <div className="stat-card-large win">
+                    <div className="stat-icon">✓</div>
+                    <div className="stat-info">
+                      <span className="stat-number">{overallStats.wins}</span>
+                      <span className="stat-title">Siege</span>
+                    </div>
+                  </div>
+                  <div className="stat-card-large lose">
+                    <div className="stat-icon">✗</div>
+                    <div className="stat-info">
+                      <span className="stat-number">{overallStats.losses}</span>
+                      <span className="stat-title">Niederlagen</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mode-breakdown">
+                  <div className="mode-stat">
+                    <span className="mode-icon">🏟️</span>
+                    <span className="mode-name">Stadion</span>
+                    <span className="mode-count">{overallStats.stadiumMatches}</span>
+                    <span className="mode-rate">{overallStats.stadiumWinRate}%</span>
+                  </div>
+                  <div className="mode-stat">
+                    <span className="mode-icon">🎯</span>
+                    <span className="mode-name">Rangliste</span>
+                    <span className="mode-count">{overallStats.ranglisteMatches}</span>
+                    <span className="mode-rate">{overallStats.ranglisteWinRate}%</span>
+                  </div>
+                </div>
+              </section>
+
+              <section className="hero-rankings-section">
+                <div className="hero-ranking-card">
+                  <h3>🏆 Top Helden</h3>
+                  {bestHeroes.length === 0 ? (
+                    <p className="empty-text">Noch keine Daten</p>
+                  ) : (
+                    <ul className="hero-ranking-list">
+                      {bestHeroes.map((hero, i) => (
+                        <li key={hero.hero} className="hero-ranking-item">
+                          <span className="hero-position">{i + 1}</span>
+                          <div className="hero-info">
+                            <span className="hero-name">{hero.hero}</span>
+                            <span className={`hero-role-badge ${ROLE_CLASSES[hero.role]}`}>
+                              {ROLE_LABELS[hero.role]}
+                            </span>
+                          </div>
+                          <div className="hero-winrate win">{hero.winRate}%</div>
+                          <span className="hero-record">{hero.wins}W / {hero.losses}L</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div className="hero-ranking-card">
+                  <h3>📉 Schwächste Helden</h3>
+                  {worstHeroes.length === 0 ? (
+                    <p className="empty-text">Noch keine Daten</p>
+                  ) : (
+                    <ul className="hero-ranking-list">
+                      {worstHeroes.map((hero, i) => (
+                        <li key={hero.hero} className="hero-ranking-item">
+                          <span className="hero-position">{i + 1}</span>
+                          <div className="hero-info">
+                            <span className="hero-name">{hero.hero}</span>
+                            <span className={`hero-role-badge ${ROLE_CLASSES[hero.role]}`}>
+                              {ROLE_LABELS[hero.role]}
+                            </span>
+                          </div>
+                          <div className="hero-winrate lose">{hero.winRate}%</div>
+                          <span className="hero-record">{hero.wins}W / {hero.losses}L</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </section>
+
+              <section className="matches-list-section">
+                <div className="matches-section-header">
+                  <h3>Match-Verlauf</h3>
+                  <div className="matches-filters">
+                    <input
+                      type="text"
+                      className="search-input"
+                      placeholder="🔍 Suchen..."
+                      value={matchesFilters.search}
+                      onChange={(event) =>
+                        setMatchesFilters((prev) => ({
+                          ...prev,
+                          search: event.target.value,
+                        }))
+                      }
+                    />
+                    <select
+                      value={matchesFilters.queue}
+                      onChange={(event) =>
+                        setMatchesFilters((prev) => ({
+                          ...prev,
+                          queue: event.target.value as MatchFilters['queue'],
+                        }))
+                      }
+                    >
+                      <option value="Alle">Alle Modi</option>
+                      <option value="Rangliste">Rangliste</option>
+                      <option value="Stadion">Stadion</option>
+                    </select>
+                    <select
+                      value={matchesFilters.result}
+                      onChange={(event) =>
+                        setMatchesFilters((prev) => ({
+                          ...prev,
+                          result: event.target.value as MatchFilters['result'],
+                        }))
+                      }
+                    >
+                      <option value="Alle">Alle Ergebnisse</option>
+                      <option value="Win">Nur Siege</option>
+                      <option value="Lose">Nur Niederlagen</option>
+                    </select>
+                    <select
+                      value={matchesFilters.role}
+                      onChange={(event) =>
+                        setMatchesFilters((prev) => ({
+                          ...prev,
+                          role: event.target.value as MatchFilters['role'],
+                        }))
+                      }
+                    >
+                      <option value="Alle">Alle Rollen</option>
+                      <option value="Tank">{ROLE_LABELS.Tank}</option>
+                      <option value="DPS">{ROLE_LABELS.DPS}</option>
+                      <option value="Support">{ROLE_LABELS.Support}</option>
+                    </select>
+                  </div>
+                </div>
+
+                {paginatedMatches.length === 0 ? (
+                  <div className="empty-state">
+                    <p>Keine Matches gefunden.</p>
+                  </div>
+                ) : (
+                  <div className="matches-grid">
+                    {paginatedMatches.map((match) => (
+                      <div
+                        key={match.id}
+                        className={`match-card-item ${match.result === 'Win' ? 'win' : 'lose'}`}
+                      >
+                        <div className="match-card-header">
+                          <span className={`match-result-badge ${match.result === 'Win' ? 'win' : 'lose'}`}>
+                            {match.result === 'Win' ? '✓ Sieg' : '✗ Niederlage'}
+                          </span>
+                          <span className="match-date">
+                            {new Date(match.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <div className="match-card-body">
+                          <div className="match-mode">
+                            <span className="mode-badge">{match.queue}</span>
+                            {match.rank && <span className="rank-badge">{match.rank}</span>}
+                            {match.score && <span className="score-badge">🏆 {match.score.toLocaleString()}</span>}
+                          </div>
+                          {match.map && <div className="match-map">📍 {match.map}</div>}
+                          <div className="match-players-list">
+                            {match.players.map((player) => (
+                              <div key={player.id} className="match-player-chip">
+                                <span className="player-name">{player.name}</span>
+                                <span className={`player-role ${ROLE_CLASSES[player.role]}`}>
+                                  {ROLE_LABELS[player.role]}
+                                </span>
+                                {player.character && (
+                                  <span className="player-char">{player.character}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="pagination-bar">
+                  <button
+                    type="button"
+                    className="pagination-btn"
+                    onClick={() => setMatchesPage((prev) => Math.max(1, prev - 1))}
+                    disabled={activeMatchPage === 1}
+                  >
+                    ◀ Zurück
+                  </button>
+                  <span className="pagination-info">
+                    Seite {activeMatchPage} von {totalMatchPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="pagination-btn"
+                    onClick={() =>
+                      setMatchesPage((prev) => Math.min(totalMatchPages, prev + 1))
+                    }
+                    disabled={activeMatchPage === totalMatchPages}
+                  >
+                    Weiter ▶
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+
       <section className="ow-card import-export">
         <details>
           <summary>Import &amp; Export</summary>
@@ -1402,6 +1998,7 @@ export default function MatchTrackerPage() {
               >
                 Alle Vorschläge löschen
               </button>
+              
             </div>
           </div>
         </details>

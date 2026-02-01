@@ -6,7 +6,8 @@ export default defineConfig({
   base: '/owtracker/',
   server: {
     host: '0.0.0.0',
-    port: 5173,
+    port: parseInt(process.env.VITE_PORT || '12321'),
+    strictPort: true,
     proxy: {
       // Proxy /api to /owtracker/api internally for Vite dev
       '^/api': {
