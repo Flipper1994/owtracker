@@ -29,6 +29,7 @@ type MatchEntry = {
   rank?: string;
   map?: string;
   score?: number;
+  leaver?: boolean;
   players: PlayerEntry[];
   createdAt: string;
   season?: string;
@@ -234,6 +235,7 @@ const createMatch = (): MatchEntry => ({
   result: 'Win',
   rank: '',
   map: '',
+  leaver: false,
   players: [createPlayer(generateId())],
   createdAt: new Date().toISOString(),
   season: getCurrentSeason(),
@@ -243,6 +245,7 @@ export default function MatchTrackerPage() {
   const [matches, setMatches] = useState<MatchEntry[]>([]);
   const [draft, setDraft] = useState<MatchEntry>(() => createMatch());
   const [roleFilter, setRoleFilter] = useState<'Alle' | Role>('Alle');
+  const [queueFilter, setQueueFilter] = useState<'Alle' | 'Rangliste' | 'Stadion'>('Alle');
   const [submitLocked, setSubmitLocked] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [importing, setImporting] = useState(false);
@@ -264,7 +267,9 @@ export default function MatchTrackerPage() {
     description: '',
   });
   
-  const [selectedSeason, setSelectedSeason] = useState<string>(() => getCurrentSeason());
+  const [selectedSeason, setSelectedSeason] = useState<string>('S20');
+  // Key format: "PlayerName:Queue:Role" -> rank string
+  const [playerRanks, setPlayerRanks] = useState<Record<string, string>>({});
   const [showProDialog, setShowProDialog] = useState(false);
   const [playerSort, setPlayerSort] = useState<Record<string, SortState>>(() =>
     Object.fromEntries(
@@ -296,12 +301,17 @@ export default function MatchTrackerPage() {
     return matches.filter((match) => match.season === selectedSeason);
   }, [matches, selectedSeason]);
 
+  const queueFilteredMatches = useMemo(() => {
+    if (queueFilter === 'Alle') return seasonFilteredMatches;
+    return seasonFilteredMatches.filter((match) => match.queue === queueFilter);
+  }, [seasonFilteredMatches, queueFilter]);
+
   const roleFilteredMatches = useMemo(() => {
-    if (roleFilter === 'Alle') return seasonFilteredMatches;
-    return seasonFilteredMatches.filter((match) =>
+    if (roleFilter === 'Alle') return queueFilteredMatches;
+    return queueFilteredMatches.filter((match) =>
       match.players.some((player) => player.role === roleFilter),
     );
-  }, [seasonFilteredMatches, roleFilter]);
+  }, [queueFilteredMatches, roleFilter]);
 
   const sortedMatches = useMemo(() => {
     return [...seasonFilteredMatches].sort(
@@ -396,7 +406,43 @@ export default function MatchTrackerPage() {
     void loadImprovements();
   }, [loadImprovements]);
 
-  
+  const loadPlayerRanks = useCallback(async (season: string) => {
+    try {
+      const response = await fetch(`/api/player-ranks?season=${encodeURIComponent(season)}`);
+      if (!response.ok) return;
+      const data = (await response.json()) as { player: string; queue: string; role: string; rank: string }[];
+      const ranks: Record<string, string> = {};
+      data.forEach((row) => {
+        ranks[`${row.player}:${row.queue}:${row.role}`] = row.rank;
+      });
+      setPlayerRanks(ranks);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPlayerRanks(selectedSeason);
+  }, [selectedSeason, loadPlayerRanks]);
+
+  const getPlayerRank = (player: string, queue: string, role: string) =>
+    playerRanks[`${player}:${queue}:${role}`] ?? '';
+
+  const savePlayerRank = async (player: string, queue: string, role: string, rank: string) => {
+    const key = `${player}:${queue}:${role}`;
+    setPlayerRanks((prev) => ({ ...prev, [key]: rank }));
+    try {
+      await fetch('/api/player-ranks', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player, season: selectedSeason, queue, role, rank }),
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+
 
   useEffect(() => {
     if (ultimateUnlocked) return;
@@ -441,6 +487,16 @@ export default function MatchTrackerPage() {
     [roleFilteredMatches],
   );
 
+  const leaverCount = useMemo(
+    () => roleFilteredMatches.filter((match) => match.leaver).length,
+    [roleFilteredMatches],
+  );
+
+  const leaverRate = useMemo(
+    () => roleFilteredMatches.length === 0 ? 0 : Math.round((leaverCount / roleFilteredMatches.length) * 100),
+    [roleFilteredMatches, leaverCount],
+  );
+
   const playerStats = useMemo(() => {
     return PLAYER_NAMES.map((name) => {
       const playerMatches = roleFilteredMatches.filter((match) =>
@@ -453,6 +509,8 @@ export default function MatchTrackerPage() {
       const wins = playerMatches.filter((match) => match.result === 'Win').length;
       const losses = playerMatches.filter((match) => match.result === 'Lose').length;
       const total = playerMatches.length;
+      const leaverWins = playerMatches.filter((match) => match.result === 'Win' && match.leaver).length;
+      const leaverLosses = playerMatches.filter((match) => match.result === 'Lose' && match.leaver).length;
       const rate = total === 0 ? 0 : Math.round((wins / total) * 100);
       const roleCounts = new Map<Role, number>();
       const roleWins = new Map<Role, number>();
@@ -530,6 +588,8 @@ export default function MatchTrackerPage() {
         losses,
         total,
         winRate: rate,
+        leaverWins,
+        leaverLosses,
         topRole,
         topRoleCount,
         topCharacter,
@@ -547,6 +607,7 @@ export default function MatchTrackerPage() {
     const stats = new Map<string, { wins: number; losses: number; players: PlayerEntry[] }>();
 
     roleFilteredMatches.forEach((match) => {
+      if (match.players.length < 2) return;
       const players = [...match.players].sort((a, b) => {
         const roleDiff = roleOrder[a.role] - roleOrder[b.role];
         if (roleDiff !== 0) return roleDiff;
@@ -562,27 +623,69 @@ export default function MatchTrackerPage() {
       stats.set(key, entry);
     });
 
-    return Array.from(stats.values()).map((entry) => {
-      const total = entry.wins + entry.losses;
-      return {
-        ...entry,
-        total,
-        winRate: total === 0 ? 0 : Math.round((entry.wins / total) * 100),
-      };
-    });
+    return Array.from(stats.values())
+      .map((entry) => {
+        const total = entry.wins + entry.losses;
+        return {
+          ...entry,
+          total,
+          winRate: total === 0 ? 0 : Math.round((entry.wins / total) * 100),
+        };
+      })
+      .filter((entry) => entry.total >= 2);
   }, [roleFilteredMatches]);
 
   const bestCombos = useMemo(() => {
     return [...comboStats]
-      .sort((a, b) => b.winRate - a.winRate)
+      .sort((a, b) => b.winRate - a.winRate || b.total - a.total)
       .slice(0, 3);
   }, [comboStats]);
 
   const worstCombos = useMemo(() => {
     return [...comboStats]
-      .sort((a, b) => a.winRate - b.winRate)
+      .sort((a, b) => a.winRate - b.winRate || b.total - a.total)
       .slice(0, 3);
   }, [comboStats]);
+
+  const streakStats = useMemo(() => {
+    const sorted = [...roleFilteredMatches].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+    let currentWin = 0;
+    let currentLose = 0;
+    let maxWin = 0;
+    let maxLose = 0;
+    sorted.forEach((match) => {
+      if (match.result === 'Win') {
+        currentWin += 1;
+        currentLose = 0;
+        if (currentWin > maxWin) maxWin = currentWin;
+      } else {
+        currentLose += 1;
+        currentWin = 0;
+        if (currentLose > maxLose) maxLose = currentLose;
+      }
+    });
+    return { maxWin, maxLose };
+  }, [roleFilteredMatches]);
+
+  const mapStats = useMemo(() => {
+    const stats = new Map<string, { wins: number; losses: number }>();
+    roleFilteredMatches.forEach((match) => {
+      if (!match.map) return;
+      const entry = stats.get(match.map) ?? { wins: 0, losses: 0 };
+      if (match.result === 'Win') entry.wins += 1;
+      else entry.losses += 1;
+      stats.set(match.map, entry);
+    });
+    return Array.from(stats.entries())
+      .map(([map, data]) => {
+        const total = data.wins + data.losses;
+        return { map, ...data, total, winRate: total === 0 ? 0 : Math.round((data.wins / total) * 100) };
+      })
+      .filter((m) => m.total >= 2)
+      .sort((a, b) => b.winRate - a.winRate || b.total - a.total);
+  }, [roleFilteredMatches]);
 
   const heroStats = useMemo(() => {
     const stats = new Map<string, { hero: string; role: Role; wins: number; losses: number }>();
@@ -634,6 +737,8 @@ export default function MatchTrackerPage() {
     const ranglisteWins = seasonFilteredMatches.filter((m) => m.queue === 'Rangliste' && m.result === 'Win').length;
     const stadiumWinRate = stadiumMatches === 0 ? 0 : Math.round((stadiumWins / stadiumMatches) * 100);
     const ranglisteWinRate = ranglisteMatches === 0 ? 0 : Math.round((ranglisteWins / ranglisteMatches) * 100);
+    const leaverMatches = seasonFilteredMatches.filter((m) => m.leaver).length;
+    const leaverRate = totalMatches === 0 ? 0 : Math.round((leaverMatches / totalMatches) * 100);
     return {
       totalMatches,
       wins,
@@ -643,6 +748,8 @@ export default function MatchTrackerPage() {
       ranglisteMatches,
       stadiumWinRate,
       ranglisteWinRate,
+      leaverMatches,
+      leaverRate,
     };
   }, [seasonFilteredMatches]);
 
@@ -689,6 +796,7 @@ export default function MatchTrackerPage() {
       ...draft,
       id: generateId(),
       createdAt: new Date().toISOString(),
+      season: selectedSeason,
     };
     try {
       const response = await fetch('/api/matches', {
@@ -807,8 +915,11 @@ export default function MatchTrackerPage() {
   };
 
   const handleDeleteAll = async () => {
-    const confirmed = window.confirm('Willst du wirklich alle Matches löschen?');
-    if (!confirmed) return;
+    const password = window.prompt('Passwort eingeben um alle Matches zu löschen:');
+    if (password !== '>_') {
+      if (password !== null) addToast('Falsches Passwort');
+      return;
+    }
     try {
       const response = await fetch('/api/matches', { method: 'DELETE' });
       if (!response.ok) {
@@ -822,8 +933,11 @@ export default function MatchTrackerPage() {
   };
 
   const handleDeleteAllImprovements = async () => {
-    const confirmed = window.confirm('Willst du wirklich alle Vorschläge löschen?');
-    if (!confirmed) return;
+    const password = window.prompt('Passwort eingeben um alle Vorschläge zu löschen:');
+    if (password !== '>_') {
+      if (password !== null) addToast('Falsches Passwort');
+      return;
+    }
     try {
       const response = await fetch('/api/improvements', { method: 'DELETE' });
       if (!response.ok) {
@@ -1047,10 +1161,18 @@ export default function MatchTrackerPage() {
       <section className="dashboard-grid">
         <div className="role-filter">
           <div>
-            <h3>Rollenfilter</h3>
-            <p className="muted">Alle Dashboards beziehen sich auf diese Rolle.</p>
+            <h3>Filter</h3>
+            <p className="muted">Alle Dashboards beziehen sich auf diese Filter.</p>
           </div>
           <div className="role-filter-controls">
+            <select
+              value={queueFilter}
+              onChange={(event) => setQueueFilter(event.target.value as 'Alle' | 'Rangliste' | 'Stadion')}
+            >
+              <option value="Alle">Alle Modi</option>
+              <option value="Rangliste">Rangliste</option>
+              <option value="Stadion">Stadion</option>
+            </select>
             <select
               className={roleFilter === 'Alle' ? '' : `role-select ${ROLE_CLASSES[roleFilter]}`}
               value={roleFilter}
@@ -1105,12 +1227,56 @@ export default function MatchTrackerPage() {
               <span className="stat-label">Losses</span>
               <span className="stat-value">{lossCount}</span>
             </div>
+            <div className="stat-card leaver-stat">
+              <span className="stat-label">Leaver</span>
+              <span className="stat-value">{leaverCount} <span className="stat-sub">({leaverRate}%)</span></span>
+            </div>
+          </div>
+          <div className="team-extra-stats">
+            <div className="streak-stats">
+              <div className="streak-card win-streak">
+                <span className="streak-label">Längste Siegesserie</span>
+                <span className="streak-value">{streakStats.maxWin}</span>
+              </div>
+              <div className="streak-card lose-streak">
+                <span className="streak-label">Längste Niederlagenserie</span>
+                <span className="streak-value">{streakStats.maxLose}</span>
+              </div>
+            </div>
+            {mapStats.length > 0 && (
+              <div className="map-stats-section">
+                <h3>Beste Maps</h3>
+                <ul className="map-stats-list">
+                  {mapStats.slice(0, 3).map((m) => (
+                    <li key={m.map} className="map-stat-item">
+                      <span className="map-name">{m.map}</span>
+                      <span className="map-rate win">{m.winRate}%</span>
+                      <span className="map-record">{m.wins}W / {m.losses}L</span>
+                    </li>
+                  ))}
+                </ul>
+                {mapStats.length > 3 && (
+                  <>
+                    <h3>Schwächste Maps</h3>
+                    <ul className="map-stats-list">
+                      {[...mapStats].reverse().slice(0, 3).map((m) => (
+                        <li key={`${m.map}-worst`} className="map-stat-item">
+                          <span className="map-name">{m.map}</span>
+                          <span className="map-rate lose">{m.winRate}%</span>
+                          <span className="map-record">{m.wins}W / {m.losses}L</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            )}
           </div>
           <div className="combo-grid">
             <div>
               <h3>Beste Kombis</h3>
               {bestCombos.length === 0 ? (
-                <p className="empty">Noch keine Kombis erfasst.</p>
+                <p className="empty">Noch keine Kombis mit min. 2 Spielern und 2 Matches.</p>
               ) : (
                 <ul className="combo-list">
                   {bestCombos.map((combo) => (
@@ -1119,7 +1285,7 @@ export default function MatchTrackerPage() {
                       className="combo-item"
                     >
                       <strong>{combo.winRate}% Winrate</strong>
-                      <span>{combo.wins}W / {combo.losses}L</span>
+                      <span>{combo.wins}W / {combo.losses}L ({combo.total} Spiele)</span>
                       <div className="combo-players">
                         {combo.players.map((player) => (
                           <span key={player.id}>
@@ -1138,7 +1304,7 @@ export default function MatchTrackerPage() {
             <div>
               <h3>Schwächste Kombis</h3>
               {worstCombos.length === 0 ? (
-                <p className="empty">Noch keine Kombis erfasst.</p>
+                <p className="empty">Noch keine Kombis mit min. 2 Spielern und 2 Matches.</p>
               ) : (
                 <ul className="combo-list">
                   {worstCombos.map((combo) => (
@@ -1147,7 +1313,7 @@ export default function MatchTrackerPage() {
                       className="combo-item"
                     >
                       <strong>{combo.winRate}% Winrate</strong>
-                      <span>{combo.wins}W / {combo.losses}L</span>
+                      <span>{combo.wins}W / {combo.losses}L ({combo.total} Spiele)</span>
                       <div className="combo-players">
                         {combo.players.map((player) => (
                           <span key={player.id}>
@@ -1181,6 +1347,44 @@ export default function MatchTrackerPage() {
                   )}
                 </span>
               </div>
+              <div className="player-ranks-grid">
+                <div className="player-ranks-column">
+                  <span className="rank-column-header">Rangliste</span>
+                  {(['Tank', 'DPS', 'Support'] as Role[]).map((role) => (
+                    <label key={`ranked-${role}`} className="rank-inline">
+                      <span className={`rank-role-label ${ROLE_CLASSES[role]}`}>{ROLE_LABELS[role]}</span>
+                      <select
+                        className="rank-inline-select"
+                        value={getPlayerRank(player.name, 'Rangliste', role)}
+                        onChange={(event) => savePlayerRank(player.name, 'Rangliste', role, event.target.value)}
+                      >
+                        <option value="">-</option>
+                        {COMPETITIVE_RANKS.map((rank) => (
+                          <option key={rank} value={rank}>{rank}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+                <div className="player-ranks-column">
+                  <span className="rank-column-header">Stadion</span>
+                  {(['Tank', 'DPS', 'Support'] as Role[]).map((role) => (
+                    <label key={`stadium-${role}`} className="rank-inline">
+                      <span className={`rank-role-label ${ROLE_CLASSES[role]}`}>{ROLE_LABELS[role]}</span>
+                      <select
+                        className="rank-inline-select"
+                        value={getPlayerRank(player.name, 'Stadion', role)}
+                        onChange={(event) => savePlayerRank(player.name, 'Stadion', role, event.target.value)}
+                      >
+                        <option value="">-</option>
+                        {STADIUM_RANKS.map((rank) => (
+                          <option key={rank} value={rank}>{STADIUM_RANK_ICONS[rank] ?? ''} {rank}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+              </div>
               <div className="player-stat-line">
                 <div>
                   <span>Winrate</span>
@@ -1192,11 +1396,11 @@ export default function MatchTrackerPage() {
                 </div>
                 <div>
                   <span>Wins</span>
-                  <strong>{player.wins}</strong>
+                  <strong>{player.wins}{player.leaverWins > 0 && <span className="leaver-hint"> ({player.leaverWins} Leaver)</span>}</strong>
                 </div>
                 <div>
                   <span>Losses</span>
-                  <strong>{player.losses}</strong>
+                  <strong>{player.losses}{player.leaverLosses > 0 && <span className="leaver-hint"> ({player.leaverLosses} Leaver)</span>}</strong>
                 </div>
               </div>
               <div className="player-role-winrates">
@@ -1409,6 +1613,7 @@ export default function MatchTrackerPage() {
                 {selectedMatch.result}
               </span>
               {selectedMatch.map && <span>Map: {selectedMatch.map}</span>}
+              {selectedMatch.leaver && <span className="leaver-badge">Leaver</span>}
             </div>
             <h4>Mitspieler</h4>
             <ul className="match-overlay-players">
@@ -1574,6 +1779,16 @@ export default function MatchTrackerPage() {
                 </label>
               </div>
             )}
+            <div className="form-row">
+              <label className="leaver-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={draft.leaver ?? false}
+                  onChange={(event) => updateDraft({ leaver: event.target.checked })}
+                />
+                Leaver?
+              </label>
+            </div>
             <div className="players">
               <div className="players-header">
                 <h3>Spieler im Match</h3>
@@ -1698,6 +1913,7 @@ export default function MatchTrackerPage() {
                       {match.rank ? ` · ${match.rank}` : ''}
                     </span>
                     {match.map && <span>Map: {match.map}</span>}
+                    {match.leaver && <span className="leaver-badge">Leaver</span>}
                     <div className="match-players">
                       {match.players.map((player) => (
                         <div key={player.id} className="player-pill">
@@ -2021,41 +2237,6 @@ export default function MatchTrackerPage() {
         </div>
       )}
 
-      <section className="ow-card import-export">
-        <details>
-          <summary>Import &amp; Export</summary>
-          <div className="import-export-body">
-            <p className="muted">
-              Exportiere deine Matches als JSON-Datei oder importiere sie nach einem Umzug.
-            </p>
-            <div className="import-export-actions">
-              <button type="button" className="primary" onClick={handleExport}>
-                Export herunterladen
-              </button>
-              <label className="import-button">
-                <input type="file" accept="application/json" onChange={handleImport} />
-                {importing ? 'Import läuft...' : 'Importieren'}
-              </label>
-              <button
-                type="button"
-                className="danger-button"
-                onClick={handleDeleteAll}
-              >
-                Alles löschen
-              </button>
-              <button
-                type="button"
-                className="danger-button"
-                onClick={handleDeleteAllImprovements}
-              >
-                Alle Vorschläge löschen
-              </button>
-              
-            </div>
-          </div>
-        </details>
-      </section>
-
       <section className="ow-card improvements">
         <details>
           <summary>Verbesserungsvorschläge</summary>
@@ -2138,6 +2319,41 @@ export default function MatchTrackerPage() {
                   ))}
                 </ul>
               )}
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <section className="ow-card import-export">
+        <details>
+          <summary>Import &amp; Export</summary>
+          <div className="import-export-body">
+            <p className="muted">
+              Exportiere deine Matches als JSON-Datei oder importiere sie nach einem Umzug.
+            </p>
+            <div className="import-export-actions">
+              <button type="button" className="primary" onClick={handleExport}>
+                Export herunterladen
+              </button>
+              <label className="import-button">
+                <input type="file" accept="application/json" onChange={handleImport} />
+                {importing ? 'Import läuft...' : 'Importieren'}
+              </label>
+              <button
+                type="button"
+                className="danger-button"
+                onClick={handleDeleteAll}
+              >
+                Alles löschen
+              </button>
+              <button
+                type="button"
+                className="danger-button"
+                onClick={handleDeleteAllImprovements}
+              >
+                Alle Vorschläge löschen
+              </button>
+
             </div>
           </div>
         </details>

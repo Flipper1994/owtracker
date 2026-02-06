@@ -105,6 +105,38 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS player_ranks (
+    player TEXT NOT NULL,
+    season TEXT NOT NULL,
+    queue TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT '',
+    rank TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (player, season, queue, role)
+  );
+`);
+
+// Migration: Add role column to player_ranks if it doesn't exist
+try {
+  db.exec(`ALTER TABLE player_ranks ADD COLUMN role TEXT NOT NULL DEFAULT ''`);
+  // Recreate table with new primary key
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS player_ranks_new (
+      player TEXT NOT NULL,
+      season TEXT NOT NULL,
+      queue TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT '',
+      rank TEXT NOT NULL DEFAULT '',
+      PRIMARY KEY (player, season, queue, role)
+    );
+  `);
+  db.exec(`INSERT OR IGNORE INTO player_ranks_new (player, season, queue, role, rank) SELECT player, season, queue, '', rank FROM player_ranks`);
+  db.exec(`DROP TABLE player_ranks`);
+  db.exec(`ALTER TABLE player_ranks_new RENAME TO player_ranks`);
+} catch (e) {
+  // Column already exists or table is already correct
+}
+
 app.use(cors({
   origin: [
     'http://localhost:12321',
@@ -400,6 +432,35 @@ app.delete('/api/archive-links/:id', (req, res) => {
     return res.status(404).json({ error: 'Link nicht gefunden' });
   }
   res.status(204).send();
+});
+
+app.get('/api/player-ranks', (req, res) => {
+  const { season } = req.query;
+  if (!season) {
+    return res.status(400).json({ error: 'Season parameter fehlt' });
+  }
+  const rows = db
+    .prepare('SELECT player, queue, role, rank FROM player_ranks WHERE season = ?')
+    .all(season);
+  res.json(rows);
+});
+
+app.put('/api/player-ranks', (req, res) => {
+  try {
+    const { player, season, queue, role, rank } = req.body;
+    if (!player || !season || !queue || !role) {
+      return res.status(400).json({ error: 'player, season, queue und role sind Pflichtfelder' });
+    }
+    db.prepare(
+      `INSERT INTO player_ranks (player, season, queue, role, rank)
+       VALUES (@player, @season, @queue, @role, @rank)
+       ON CONFLICT(player, season, queue, role) DO UPDATE SET rank = excluded.rank`
+    ).run({ player, season, queue, role, rank: rank ?? '' });
+    return res.json({ player, season, queue, role, rank: rank ?? '' });
+  } catch (error) {
+    console.error('PUT /api/player-ranks failed', error);
+    return res.status(500).json({ error: 'Rang konnte nicht gespeichert werden' });
+  }
 });
 
 const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
