@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 type TraResponse = {
   content: string;
@@ -22,6 +22,7 @@ export default function TraPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const saveTimeoutRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (folderInputRef.current) {
@@ -65,6 +66,10 @@ export default function TraPage() {
 
   useEffect(() => {
     const handler = setInterval(async () => {
+      // Nicht pollen, wenn wir gerade selbst speichern (verhindert Überschreiben)
+      if (status === 'saving') {
+        return;
+      }
       try {
         const response = await fetch('/api/tra');
         if (!response.ok) {
@@ -80,7 +85,7 @@ export default function TraPage() {
     }, 2000);
 
     return () => clearInterval(handler);
-  }, [content]);
+  }, [content, status]);
 
   useEffect(() => {
     const handler = setInterval(async () => {
@@ -99,7 +104,7 @@ export default function TraPage() {
     return () => clearInterval(handler);
   }, []);
 
-  const saveContent = async (nextValue: string) => {
+  const saveContent = useCallback(async (nextValue: string) => {
     setStatus('saving');
     setError('');
     try {
@@ -119,12 +124,19 @@ export default function TraPage() {
       setStatus('error');
       setError('Speichern fehlgeschlagen.');
     }
-  };
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const nextValue = e.target.value;
     setContent(nextValue);
-    saveContent(nextValue);
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    setStatus('saving');
+    saveTimeoutRef.current = window.setTimeout(() => {
+      saveContent(nextValue);
+    }, 1000);
   };
 
   const uploadFiles = async (fileList: FileList | null) => {

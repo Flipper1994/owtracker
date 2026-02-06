@@ -267,7 +267,7 @@ export default function MatchTrackerPage() {
     description: '',
   });
   
-  const [selectedSeason, setSelectedSeason] = useState<string>('S20');
+  const [selectedSeason, setSelectedSeason] = useState<string>(getCurrentSeason());
   // Key format: "PlayerName:Queue:Role" -> rank string
   const [playerRanks, setPlayerRanks] = useState<Record<string, string>>({});
   const [showProDialog, setShowProDialog] = useState(false);

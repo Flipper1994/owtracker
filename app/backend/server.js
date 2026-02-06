@@ -139,12 +139,11 @@ try {
 
 app.use(cors({
   origin: [
-    'http://localhost:12321',
+    'http://localhost',
+    'http://localhost:80',
     'http://localhost:8080',
-    'https://owtracker.duckdns.org',
-    'https://owtracker.duckdns.org:12321',
-    'http://owtracker.duckdns.org',
-    'http://owtracker.duckdns.org:12321',
+    'https://overwatchtracker.duckdns.org',
+    'http://overwatchtracker.duckdns.org',
   ],
   credentials: true,
 }));

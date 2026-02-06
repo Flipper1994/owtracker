@@ -28,6 +28,7 @@ print_usage() {
   echo "  local      Start in local development mode (default)"
   echo "  server     Start with Docker for production"
   echo "  refresh    Git pull, restart containers"
+  echo "  push [msg] Commit & Push all changes"
   echo "  stop       Stop all services"
   echo "  logs       Show logs"
   echo ""
@@ -100,6 +101,7 @@ start_local() {
   echo -e "${BLUE}================================${NC}"
   echo ""
   echo -e "   ${GREEN}http://localhost:$PORT/owtracker${NC}"
+  echo -e "   ${GREEN}http://overwatchtracker.duckdns.org/owtracker (via Nginx)${NC}"
   echo ""
   echo -e "${BLUE}================================${NC}"
   echo -e "${BLUE}Logs: $LOG_DIR${NC}"
@@ -177,6 +179,28 @@ git_refresh() {
   start_docker
 }
 
+# Git Push
+git_push() {
+  local msg="${1:-}"
+  if [[ -z "$msg" ]]; then
+    msg="Update $(date +%Y-%m-%d\ %H:%M:%S)"
+  fi
+
+  print_header
+  echo -e "${BLUE}Git Push${NC}"
+  echo ""
+
+  echo -e "${YELLOW}Adding changes...${NC}"
+  git add .
+
+  echo -e "${YELLOW}Committing ('$msg')...${NC}"
+  git commit -m "$msg" || true
+
+  echo -e "${YELLOW}Pushing...${NC}"
+  git push
+  echo -e "${GREEN}Done.${NC}"
+}
+
 # Logs anzeigen
 show_logs() {
   if [[ -d "$LOG_DIR" ]]; then
@@ -202,6 +226,9 @@ case "$CMD" in
     ;;
   "refresh"|"update")
     git_refresh
+    ;;
+  "push")
+    git_push "${2:-}"
     ;;
   "stop")
     stop_local 2>/dev/null || true
